@@ -57,13 +57,44 @@ jobs:
         working-directory: app
         run: flutter build apk --release --flavor admin
 
+      - name: Canonical re-sign (zipalign -> apksigner v1+v2+v3) with verify gate
+        working-directory: app
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ ! -f android/app/orubus-release.jks ]; then
+            echo "NO KEYSTORE — keeping gradle-signed APKs as-is (debug path)"
+            exit 0
+          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "build-tools: $BT"
+          set -e
+          for FLAVOR in consumer admin; do
+            IN="build/app/outputs/flutter-apk/app-$FLAVOR-release.apk"
+            AL="build/app/outputs/flutter-apk/$FLAVOR-aligned.apk"
+            OUT="build/app/outputs/flutter-apk/$FLAVOR-signed.apk"
+            "$BT/zipalign" -f -p 4096 "$IN" "$AL"
+            "$BT/apksigner" sign \
+              --ks android/app/orubus-release.jks --ks-key-alias "$KS_ALIAS" \
+              --ks-pass pass:"$KS_PASS" --key-pass pass:"$KS_PASS" \
+              --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+              --out "$OUT" "$AL"
+            "$BT/apksigner" verify --verbose --print-certs "$OUT"
+          done
+
       - name: Stage versioned APK names
         working-directory: app
         run: |
           VERSION=$(grep '^orubusVersionName=' android/gradle.properties | cut -d= -f2)
           mkdir -p out
-          cp build/app/outputs/flutter-apk/app-consumer-release.apk "out/OrubusHarness-$VERSION-consumer.apk"
-          cp build/app/outputs/flutter-apk/app-admin-release.apk "out/OrubusHarness-$VERSION-admin.apk"
+          if [ -f build/app/outputs/flutter-apk/consumer-signed.apk ]; then
+            cp build/app/outputs/flutter-apk/consumer-signed.apk "out/OrubusHarness-$VERSION-consumer.apk"
+            cp build/app/outputs/flutter-apk/admin-signed.apk "out/OrubusHarness-$VERSION-admin.apk"
+          else
+            cp build/app/outputs/flutter-apk/app-consumer-release.apk "out/OrubusHarness-$VERSION-consumer.apk"
+            cp build/app/outputs/flutter-apk/app-admin-release.apk "out/OrubusHarness-$VERSION-admin.apk"
+          fi
           ls -la out
 
       - name: Upload APK artifacts
