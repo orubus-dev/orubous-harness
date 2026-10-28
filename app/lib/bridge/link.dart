@@ -35,6 +35,7 @@ class Link {
   PlatformOps? ops;
   String workspace = '';
   bool paired = false; // operator answered at least once on this identity
+  String model = ''; // model picker selection — the Chat screen keeps this in sync with the store
 
   /// Hook set by the shell: persists the online flag for auto-resume.
   void Function(bool online)? onOnlineChanged;
@@ -180,6 +181,7 @@ class Link {
       return;
     }
     log('connecting to operator relay…');
+    model = s.model;
     await connect(
       relayBase: s.relayBase,
       key: s.bridgeKey,
@@ -194,6 +196,7 @@ class Link {
   Future<void> autoResume(Store s) async {
     if (!s.wasOnline || online) return;
     autoLog('auto-resume: reconnecting relay…');
+    model = s.model;
     try {
       await connect(
         relayBase: s.relayBase,
@@ -288,7 +291,7 @@ class Link {
     chats.add(m);
     _chatStream.add(m);
     await _persist(m);
-    await engine?.sendChat(text);
+    await engine?.sendChat(text, model: model);
   }
 
   /// User attached a file (already size-checked + compressed by the UI).

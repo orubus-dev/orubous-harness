@@ -33,6 +33,7 @@ class Store {
   String token = '';
   String ntfyBase = 'https://ntfy.sh';
   String mode = 'safe'; // safe | open
+  String model = 'GLM-4.7'; // model picker selection, rides with each chat
   DateTime? pairAt;
   bool wasOnline = false;
   String chatUrl = '';
@@ -103,6 +104,7 @@ class Store {
     token = p.getString(kToken) ?? '';
     ntfyBase = p.getString(kNtfy) ?? ntfyBase;
     mode = p.getString(kMode) ?? mode;
+    model = p.getString('model') ?? model;
     final ms = p.getInt(kPairAt) ?? 0;
     pairAt = ms > 0 ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
     wasOnline = p.getBool(kWasOnline) ?? false;
@@ -132,6 +134,7 @@ class Store {
     await p.setString(kToken, token);
     await p.setString(kNtfy, ntfyBase);
     await p.setString(kMode, mode);
+    await p.setString('model', model);
     await p.setInt(kPairAt, pairAt?.millisecondsSinceEpoch ?? 0);
     await p.setBool(kWasOnline, wasOnline);
     await p.setString(kChatUrl, chatUrl);

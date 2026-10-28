@@ -151,12 +151,17 @@ class RelayEngine {
   }
 
   /// Send a chat message to the operator.
-  Future<bool> sendChat(String text) async {
+  Future<bool> sendChat(String text, {String? model}) async {
     try {
       final r = await http
           .post(_u('/api/op/send'),
               headers: _headers(),
-              body: jsonEncode({'type': 'chat', 'from': 'device', 'text': text}))
+              body: jsonEncode({
+                'type': 'chat',
+                'from': 'device',
+                'text': text,
+                if (model != null && model.isNotEmpty) 'model': model,
+              }))
           .timeout(const Duration(seconds: 20));
       return r.statusCode == 200;
     } catch (e) {

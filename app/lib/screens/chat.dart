@@ -193,6 +193,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ]),
       ),
       Expanded(child: _messagesArea(context)),
+      _modelBar(),
       _composer(),
     ]);
   }
@@ -340,6 +341,61 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String _clock(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Widget _modelBar() {
+    const models = ['GLM-4.7', 'GLM-4.6', 'Fast'];
+    final current = widget.store.model;
+    return SizedBox(
+      height: 38,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
+        children: [
+          for (final m in models)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: () async {
+                  widget.store.model = m;
+                  await widget.store.save();
+                  if (mounted) setState(() {});
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: m == current ? Neu.accent : Neu.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: m == current
+                        ? [
+                            BoxShadow(
+                                color: Neu.accentDeep.withOpacity(0.4),
+                                offset: const Offset(2, 2),
+                                blurRadius: 5),
+                          ]
+                        : const [
+                            BoxShadow(
+                                color: Neu.shadowDark,
+                                offset: Offset(2, 2),
+                                blurRadius: 4),
+                            BoxShadow(
+                                color: Neu.shadowLight,
+                                offset: Offset(-2, -2),
+                                blurRadius: 4),
+                          ],
+                  ),
+                  child: Text(m,
+                      style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: m == current ? Colors.white : Neu.inkSoft)),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   Widget _composer() {
     return Padding(
