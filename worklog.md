@@ -18,3 +18,5 @@
 - UI overhaul per user refs: neumorphic light theme (#E4E9F2 bg, #6BCEEC accent, #00CFCC focus, r=20, dual soft shadows), shell = hamburger drawer (Chat/Bridge/Pairing/Authentication/Settings/Device Access) + three-dot popup (online toggle, copy token, clear chat); bubbles: user=accent, operator=surface
 - Gate: local Dart SDK 3.13.7 `dart format --output=none` — 0 parse errors (caught 3 real syntax bugs pre-CI)
 - gradle: 1.2026.10.6 / 120261006
+
+**10.6 verification (CI round 2, run #7): SUCCESS** — admin/consumer/windows assets published; admin6.apk (24,080,519 B) independently verified: DIGEST MATCH, self-consistent, cert fp = keystore fp. Manifest: app.orubus.harness.admin @ 1.2026.10.6 (120261006), services = NotifListener + CaptureService + BridgeService ✓
