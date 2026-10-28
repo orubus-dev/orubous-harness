@@ -1,7 +1,7 @@
 name: harness
 description: Orubus Harness — the direct AI operator link (consumer + admin powerhouse flavors). Direct chat with Orubus.ai, device readers, skills, screen snapshots.
 publish_to: 'none'
-version: 1.2026.10.1+120261001
+version: 2.0.0+1
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
