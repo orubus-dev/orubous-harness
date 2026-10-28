@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../bridge/engine.dart';
+import '../bridge/relay.dart';
 import '../bridge/link.dart';
 import '../store.dart';
 import '../widgets/neu.dart';
@@ -18,7 +18,7 @@ class BridgeScreen extends StatefulWidget {
 }
 
 class _BridgeScreenState extends State<BridgeScreen> {
-  final List<BridgeEvent> _events = [];
+  final List<RelayEvent> _events = [];
   final _scroll = ScrollController();
   StreamSubscription<void>? _stateSub;
   Timer? _ticker;
@@ -48,7 +48,7 @@ class _BridgeScreenState extends State<BridgeScreen> {
 
   void _log(String text, {bool error = false}) {
     if (!mounted) return;
-    setState(() => _events.add(BridgeEvent(text, isError: error)));
+    setState(() => _events.add(RelayEvent(text, isError: error)));
     if (_events.length > 400) _events.removeRange(0, _events.length - 400);
     Timer(const Duration(milliseconds: 80), () {
       if (_scroll.hasClients) {

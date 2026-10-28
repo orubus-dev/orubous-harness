@@ -1,16 +1,17 @@
 import 'dart:async';
-import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 import '../bridge/link.dart';
 import '../store.dart';
 import '../widgets/neu.dart';
 
-/// Direct chat with the operator (Orubus.ai) — NO API, NO KEY CONFIG.
-/// Messages ride the same bridge channel as operator tasks: you write here,
-/// it lands in the operator's inbox; their replies appear here.
+/// Direct chat with the operator (Orubus.ai) — relay-first v2.
+/// ＋ icon attaches images/videos/files (≤900KB, images auto-compressed).
 /// History persists across restarts (file + mirror store).
 class ChatScreen extends StatefulWidget {
   final Store store;
@@ -26,9 +27,9 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<ChatMsg>? _sub;
   StreamSubscription<void>? _stateSub;
   bool _busy = false;
-  bool _sendingFile = false;
+  bool _uploading = false;
 
-  static const _models = ['GLM-4.7', 'GLM-4.6', 'Fast'];
+  static const maxAttachBytes = 900 * 1024;
 
   @override
   void initState() {
@@ -54,90 +55,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _send() async {
     final text = _ctrl.text.trim();
-    if (text.isEmpty || _busy) return;
+    if ((text.isEmpty && !_uploading) || _busy) return;
+    if (text.isEmpty) return;
     _ctrl.clear();
     setState(() => _busy = true);
     await Link.i.sendChat(text);
     if (!mounted) return;
     setState(() => _busy = false);
     _scrollDown();
-  }
-
-  /// ＋ icon — attach an image, video, or file. Content rides inline (base64,
-  /// ≤ ~2.5MB after encoding); the relay mirrors bigger things to GitHub later.
-  Future<void> _attach() async {
-    if (_sendingFile) return;
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Neu.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(Neu.radius))),
-      builder: (_) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(
-              leading: const Icon(Icons.image_outlined, color: Neu.accentDeep),
-              title: const Text('Photo or video'),
-              onTap: () => Navigator.pop(context, 'media')),
-          ListTile(
-              leading: const Icon(Icons.insert_drive_file_outlined,
-                  color: Neu.accentDeep),
-              title: const Text('Any file'),
-              onTap: () => Navigator.pop(context, 'file')),
-        ]),
-      ),
-    );
-    if (choice == null || !mounted) return;
-    setState(() => _sendingFile = true);
-    try {
-      FileType ft = choice == 'media' ? FileType.media : FileType.any;
-      final picked = await FilePicker.platform.pickFiles(type: ft, withData: true);
-      final f = picked?.files.single;
-      if (f == null || !mounted) return;
-      final bytes = f.bytes;
-      if (bytes == null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('could not read file'), duration: Duration(seconds: 2)));
-        return;
-      }
-      if (bytes.length > 2_500_000) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('too large — keep files under ~2.5MB for now'),
-            backgroundColor: Neu.bad,
-            duration: Duration(seconds: 3)));
-        return;
-      }
-      final mime = f.extension?.toLowerCase() ?? '';
-      final att = {
-        'name': f.name,
-        'mime': _mimeFor(mime),
-        'size': bytes.length,
-        'b64': base64Encode(bytes),
-      };
-      await Link.i.sendChat(f.name, attachment: att);
-      _scrollDown();
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('attach failed: $e'), duration: const Duration(seconds: 3)));
-    } finally {
-      if (mounted) setState(() => _sendingFile = false);
-    }
-  }
-
-  String _mimeFor(String ext) {
-    const map = {
-      'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-      'gif': 'image/gif', 'webp': 'image/webp', 'mp4': 'video/mp4',
-      'mov': 'video/quicktime', 'webm': 'video/webm', 'pdf': 'application/pdf',
-      'txt': 'text/plain', 'json': 'application/json', 'zip': 'application/zip',
-    };
-    return map[ext] ?? 'application/octet-stream';
-  }
-
-  void _pickModel(String m) async {
-    widget.store.model = m;
-    await widget.store.save();
-    Link.i.model = m;
-    setState(() {});
   }
 
   void _scrollDown() {
@@ -149,6 +74,90 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 3)));
+  }
+
+  /// ＋ icon: pick → size-guard → compress images → upload via relay.
+  Future<void> _pickAttachment() async {
+    if (_uploading || _busy) return;
+    try {
+      final res = await FilePicker.platform
+          .pickFiles(withData: false, type: FileType.any);
+      final file = res?.files.single;
+      if (file == null) return;
+      final name = file.name;
+      final mime = _mimeFor(name);
+      List<int> bytes;
+
+      if (mime.startsWith('image/') && !mime.contains('gif')) {
+        // compress images to fit the wire (photos are 2-6MB straight from camera)
+        final src = File(file.path!);
+        if (!src.existsSync()) return _snack('file vanished before upload');
+        final raw = src.readAsBytesSync();
+        List<int> out = raw;
+        if (raw.length > maxAttachBytes) {
+          out = await FlutterImageCompress.compressWithList(
+            Uint8List.fromList(raw),
+            minWidth: 1280,
+            minHeight: 1280,
+            quality: 72,
+          );
+        }
+        if (out.length > maxAttachBytes) {
+          out = await FlutterImageCompress.compressWithList(
+            Uint8List.fromList(out),
+            minWidth: 900,
+            minHeight: 900,
+            quality: 60,
+          );
+        }
+        if (out.length > maxAttachBytes) {
+          return _snack('image still too large after compression');
+        }
+        bytes = out;
+      } else {
+        final size = file.size;
+        if (size > maxAttachBytes) {
+          return _snack('too large — 900KB max for now (videos included)');
+        }
+        final f = File(file.path!);
+        if (!f.existsSync()) return _snack('file vanished before upload');
+        bytes = f.readAsBytesSync();
+      }
+
+      setState(() => _uploading = true);
+      final url = await Link.i.engine?.sendAttachment(name, mime, bytes);
+      await Link.i.markAttachmentUploaded(name, url);
+      setState(() => _uploading = false);
+      if (url == null) {
+        _snack('upload failed — check the Bridge log');
+      } else {
+        _snack('attachment delivered ✓');
+      }
+      _scrollDown();
+    } catch (e) {
+      setState(() => _uploading = false);
+      _snack('picker error: ${e.runtimeType}');
+    }
+  }
+
+  String _mimeFor(String name) {
+    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+    const map = {
+      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+      'gif': 'image/gif', 'webp': 'image/webp', 'heic': 'image/heic',
+      'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm',
+      'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg',
+      'm4a': 'audio/mp4', 'pdf': 'application/pdf',
+      'txt': 'text/plain', 'md': 'text/plain', 'json': 'application/json',
+      'zip': 'application/zip',
+    };
+    return map[ext] ?? 'application/octet-stream';
+  }
+
   @override
   Widget build(BuildContext context) {
     final online = Link.i.online;
@@ -157,8 +166,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final statusText = !online
         ? 'offline — toggle Go online in the three-dot menu'
         : (paired
-            ? 'relay link live — messages deliver instantly'
-            : 'online — paste your 6-digit code to Orubus to connect');
+            ? 'connected to operator — messages deliver instantly'
+            : 'online — waiting for operator to connect…');
 
     return Column(children: [
       Padding(
@@ -175,61 +184,17 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Text(statusText,
                 style: const TextStyle(fontSize: 11.5, color: Neu.inkSoft)),
           ),
+          if (_uploading)
+            const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Neu.accentDeep)),
         ]),
       ),
       Expanded(child: _messagesArea(context)),
-      _modelBar(),
       _composer(),
     ]);
-  }
-
-  Widget _modelBar() {
-    final current = widget.store.model;
-    return SizedBox(
-      height: 40,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        children: [
-          for (final m in _models)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: GestureDetector(
-                onTap: () => _pickModel(m),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: m == current ? Neu.accent : Neu.surface,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: m == current
-                        ? [
-                            BoxShadow(
-                                color: Neu.accentDeep.withOpacity(0.4),
-                                offset: const Offset(2, 2),
-                                blurRadius: 5),
-                          ]
-                        : const [
-                            BoxShadow(
-                                color: Neu.shadowDark,
-                                offset: Offset(2, 2),
-                                blurRadius: 4),
-                            BoxShadow(
-                                color: Neu.shadowLight,
-                                offset: Offset(-2, -2),
-                                blurRadius: 4),
-                          ],
-                  ),
-                  child: Text(m,
-                      style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                          color: m == current ? Colors.white : Neu.inkSoft)),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
   }
 
   Widget _messagesArea(BuildContext context) {
@@ -248,10 +213,11 @@ class _ChatScreenState extends State<ChatScreen> {
         padding: const EdgeInsets.all(28),
         child: Text(
           'This is a direct line to Orubus.ai —\n'
-          'the same brain you talk to on Discord, no keys.\n\n'
-          '1) Pairing screen → generate your 6-digit code\n'
-          '2) Paste the code to him in your chat\n'
-          '3) Come back here and just talk.',
+          'the same brain you talk to on Discord.\n\n'
+          '1) Pairing screen → generate your code\n'
+          '2) Paste the 6 digits in your chat\n'
+          '3) Come back here and just talk.\n\n'
+          'Use ＋ to attach images, videos and files.',
           textAlign: TextAlign.center,
           style: const TextStyle(
               color: Neu.inkSoft, fontSize: 13, height: 1.5),
@@ -298,36 +264,14 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (m.hasAttachment) ...[
-              Container(
-                margin: const EdgeInsets.only(bottom: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isUser
-                      ? Colors.white.withOpacity(0.25)
-                      : Neu.well,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(isUser ? Icons.attach_file : Icons.attach_file,
-                      size: 14,
-                      color: isUser ? Colors.white : Neu.accentDeep),
-                  const SizedBox(width: 5),
-                  Flexible(
-                    child: Text(m.attName!,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: isUser ? Colors.white : Neu.ink)),
-                  ),
-                ]),
+            if (m.hasAttachment) _attachmentView(m, isUser),
+            if (m.text.isNotEmpty && (m.text != '📎 ${m.attName}' || !m.hasAttachment))
+              Padding(
+                padding: EdgeInsets.only(top: m.hasAttachment ? 6 : 0),
+                child: SelectableText(m.text,
+                    style: const TextStyle(
+                        fontSize: 14, height: 1.35, color: Neu.ink)),
               ),
-            ],
-            if (m.text.isNotEmpty)
-              SelectableText(m.text,
-                  style: const TextStyle(
-                      fontSize: 14, height: 1.35, color: Neu.ink)),
             const SizedBox(height: 3),
             Text(_clock(m.at),
                 style: TextStyle(
@@ -339,6 +283,61 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _attachmentView(ChatMsg m, bool isUser) {
+    final url = m.attUrl;
+    if (m.attIsImage && url != null && url.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
+          child: Image.network(url,
+              fit: BoxFit.cover,
+              loadingBuilder: (_, child, prog) => prog == null
+                  ? child
+                  : const Padding(
+                      padding: EdgeInsets.all(18),
+                      child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Neu.accentDeep))),
+              errorBuilder: (_, __, ___) => _fileChip(m, isUser)),
+        ),
+      );
+    }
+    return _fileChip(m, isUser);
+  }
+
+  Widget _fileChip(ChatMsg m, bool isUser) {
+    final sizeKb = m.attSize == null ? '' : ' · ${(m.attSize! / 1024).round()}KB';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isUser ? Colors.white.withOpacity(0.25) : Neu.well,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(_iconForAtt(m.attMime),
+            size: 18, color: isUser ? Neu.ink : Neu.accentDeep),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text('${m.attName ?? 'file'}$sizeKb',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12.5, color: Neu.ink)),
+        ),
+      ]),
+    );
+  }
+
+  IconData _iconForAtt(String? mime) {
+    if (mime == null) return Icons.insert_drive_file_rounded;
+    if (mime.startsWith('image/')) return Icons.image_rounded;
+    if (mime.startsWith('video/')) return Icons.videocam_rounded;
+    if (mime.startsWith('audio/')) return Icons.headphones_rounded;
+    if (mime == 'application/pdf') return Icons.picture_as_pdf_rounded;
+    return Icons.insert_drive_file_rounded;
+  }
+
   String _clock(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
@@ -346,27 +345,32 @@ class _ChatScreenState extends State<ChatScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
       child: Row(children: [
-        NeuIconBtn(
-          _sendingFile ? Icons.hourglass_top : Icons.add,
-          iconColor: Neu.accentDeep,
-          onTap: _sendingFile ? null : _attach,
-        ),
-        const SizedBox(width: 8),
         Expanded(
           child: NeuInset(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            child: TextField(
-              controller: _ctrl,
-              minLines: 1,
-              maxLines: 5,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => _send(),
-              style: const TextStyle(fontSize: 14, color: Neu.ink),
-              decoration: const InputDecoration(
-                  hintText: 'message Orubus.ai…',
-                  hintStyle: TextStyle(color: Neu.inkSoft, fontSize: 13.5),
-                  border: InputBorder.none),
-            ),
+            padding: const EdgeInsets.fromLTRB(4, 4, 12, 4),
+            child: Row(children: [
+              NeuIconBtn(
+                Icons.add_rounded,
+                size: 36,
+                iconColor: Neu.accentDeep,
+                onTap: _uploading ? null : _pickAttachment,
+              ),
+              Expanded(
+                child: TextField(
+                  controller: _ctrl,
+                  minLines: 1,
+                  maxLines: 5,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _send(),
+                  style: const TextStyle(fontSize: 14, color: Neu.ink),
+                  decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'message Orubus.ai…',
+                      hintStyle: TextStyle(color: Neu.inkSoft, fontSize: 13.5),
+                      border: InputBorder.none),
+                ),
+              ),
+            ]),
           ),
         ),
         const SizedBox(width: 10),

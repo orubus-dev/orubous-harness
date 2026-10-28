@@ -3,14 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'relay_engine.dart';
+import 'relay.dart';
 import 'handlers.dart';
 import '../store.dart';
 
 /// Android foreground keep-alive: holds the process up so the bridge isolate
-/// keeps its ntfy stream while the app is backgrounded. No-op elsewhere.
+/// keeps its relay poll loop while the app is backgrounded. No-op elsewhere.
 Future<void> _keepAlive(bool on) async {
   if (!Platform.isAndroid) return;
   try {
@@ -23,6 +24,7 @@ Future<void> _keepAlive(bool on) async {
 
 /// App-wide singleton: ONE bridge engine, shared by every screen.
 /// The user chats on the Chat page; the same channel carries operator tasks.
+/// v2: relay-first — every byte goes to the operator relay over HTTPS.
 class Link {
   Link._();
   static final Link i = Link._();
@@ -32,7 +34,6 @@ class Link {
   RelayEngine? engine;
   PlatformOps? ops;
   String workspace = '';
-  String model = ''; // model picker selection sent with each chat
   bool paired = false; // operator answered at least once on this identity
 
   /// Hook set by the shell: persists the online flag for auto-resume.
@@ -40,7 +41,7 @@ class Link {
 
   /// Engine events that happened before any screen was listening
   /// (auto-resume at cold start). Seeded into the Bridge activity log.
-  final List<BridgeEvent> autoEvents = [];
+  final List<RelayEvent> autoEvents = [];
 
   final List<ChatMsg> chats = <ChatMsg>[];
   final _chatStream = StreamController<ChatMsg>.broadcast();
@@ -48,10 +49,14 @@ class Link {
   final _stateStream = StreamController<void>.broadcast();
   Stream<void> get stateStream => _stateStream.stream;
 
+  /// Pairing poll bookkeeping (6-digit code → operator claims it).
+  Timer? _pairPoll;
+  bool pairingNow = false;
+
   bool get online => engine?.running ?? false;
 
   void autoLog(String text, {bool error = false}) {
-    autoEvents.add(BridgeEvent(text, isError: error));
+    autoEvents.add(RelayEvent(text, isError: error));
     if (autoEvents.length > 200) {
       autoEvents.removeRange(0, autoEvents.length - 200);
     }
@@ -129,19 +134,20 @@ class Link {
     _stateStream.add(null);
   }
 
-  /// Connect the bridge (Bridge screen "Go Online", three-dot menu, auto-resume).
-  /// Relay-first: the app talks only to the Vercel relay API with its device
-  /// token — no ntfy on the device, works on any network.
+  /// Connect the relay (Bridge screen "Go Online", three-dot menu, auto-resume).
   Future<void> connect({
-    required String deviceToken,
+    required String relayBase,
+    required String key,
+    required String deviceId,
     required String mode,
     required void Function(String text, {bool error}) log,
   }) async {
     if (online) return;
     ops ??= PlatformOps(workspace: workspace, mode: mode);
     final eng = RelayEngine(
-      base: Store.relayBase,
-      deviceToken: deviceToken,
+      baseUrl: relayBase,
+      key: key,
+      deviceId: deviceId,
       mode: mode,
       ops: ops!,
       log: (e) => log(e.text, error: e.isError),
@@ -173,15 +179,11 @@ class Link {
       await disconnect();
       return;
     }
-    if (!s.hasRelayLink) {
-      log('no relay link yet — generate a 6-digit code on the Pairing screen',
-          error: true);
-      return;
-    }
     log('connecting to operator relay…');
-    model = s.model;
     await connect(
-      deviceToken: s.deviceToken,
+      relayBase: s.relayBase,
+      key: s.bridgeKey,
+      deviceId: s.deviceId,
       mode: s.mode,
       log: log,
     );
@@ -190,12 +192,13 @@ class Link {
   /// Cold-start auto-resume: if the app was online when it was closed,
   /// reconnect immediately — "withstand app closes".
   Future<void> autoResume(Store s) async {
-    if (!s.wasOnline || !s.hasRelayLink || online) return;
-    autoLog('auto-resume: reconnecting operator relay…');
+    if (!s.wasOnline || online) return;
+    autoLog('auto-resume: reconnecting relay…');
     try {
-      model = s.model;
       await connect(
-        deviceToken: s.deviceToken,
+        relayBase: s.relayBase,
+        key: s.bridgeKey,
+        deviceId: s.deviceId,
         mode: s.mode,
         log: autoLog,
       );
@@ -204,24 +207,132 @@ class Link {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // 6-digit pairing — the consumer flow.
+  // -------------------------------------------------------------------------
+
+  /// Register a fresh 6-digit code on the relay. Returns the code or throws.
+  Future<String> startPairing(Store s) async {
+    s.generatePairCode();
+    await s.save();
+    final r = await http
+        .post(Uri.parse('${s.relayBase}/api/pair/start'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'code': s.pairCode, 'device': s.deviceId}))
+        .timeout(const Duration(seconds: 20));
+    if (r.statusCode != 200) {
+      throw 'relay rejected the code (HTTP ${r.statusCode})';
+    }
+    pairingNow = true;
+    _stateStream.add(null);
+    _pollPair(s);
+    return s.pairCode;
+  }
+
+  void _pollPair(Store s) {
+    _pairPoll?.cancel();
+    _pairPoll = Timer.periodic(const Duration(seconds: 3), (t) async {
+      if (!pairingNow || s.pairCode.length != 6) {
+        t.cancel();
+        return;
+      }
+      try {
+        final r = await http
+            .get(Uri.parse('${s.relayBase}/api/pair/status?code=${s.pairCode}'))
+            .timeout(const Duration(seconds: 12));
+        if (r.statusCode == 200) {
+          final d = jsonDecode(r.body) as Map;
+          if (d['claimed'] == true && !s.pairClaimed) {
+            s.pairClaimed = true;
+            await s.save();
+            pairingNow = false;
+            t.cancel();
+            autoLog('operator connected — link is live ✓');
+            if (!online) {
+              await connect(
+                relayBase: s.relayBase,
+                key: s.bridgeKey,
+                deviceId: s.deviceId,
+                mode: s.mode,
+                log: autoLog,
+              );
+            }
+            _stateStream.add(null);
+          }
+        }
+      } catch (_) {
+        // transient — keep polling until the window closes
+        if (s.pairingOpen == false) {
+          pairingNow = false;
+          t.cancel();
+          _stateStream.add(null);
+        }
+      }
+    });
+  }
+
+  void stopPairing() {
+    pairingNow = false;
+    _pairPoll?.cancel();
+    _pairPoll = null;
+    _stateStream.add(null);
+  }
+
+  // -------------------------------------------------------------------------
+  // Chat
+  // -------------------------------------------------------------------------
+
   /// User sent a message on the Chat screen.
-  Future<void> sendChat(String text, {Map<String, dynamic>? attachment}) async {
-    final m = ChatMsg('me', text,
-        attName: attachment?['name'] as String?,
-        attMime: attachment?['mime'] as String?,
-        attUrl: attachment?['url'] as String?);
+  Future<void> sendChat(String text) async {
+    final m = ChatMsg('me', text);
     chats.add(m);
     _chatStream.add(m);
     await _persist(m);
-    await engine?.sendChat(text, attachment: attachment, model: model);
+    await engine?.sendChat(text);
+  }
+
+  /// User attached a file (already size-checked + compressed by the UI).
+  Future<void> sendAttachment(String name, String mime, List<int> bytes) async {
+    final m = ChatMsg('me', '📎 $name',
+        attName: name, attMime: mime, attSize: bytes.length);
+    chats.add(m);
+    _chatStream.add(m);
+    await _persist(m);
+    final url = await engine?.sendAttachment(name, mime, bytes);
+    await markAttachmentUploaded(name, url);
+  }
+
+  /// Fill in the asset URL once the upload lands (enables inline preview).
+  Future<void> markAttachmentUploaded(String name, String? url) async {
+    if (url == null || url.isEmpty) {
+      _stateStream.add(null);
+      return;
+    }
+    for (var i = chats.length - 1; i >= 0; i--) {
+      final m = chats[i];
+      if (m.from == 'me' && m.attName == name && (m.attUrl ?? '').isEmpty) {
+        final done = ChatMsg('me', m.text,
+            at: m.at,
+            attName: m.attName,
+            attMime: m.attMime,
+            attUrl: url,
+            attSize: m.attSize);
+        chats[i] = done;
+        await _persist(done);
+        _chatStream.add(done);
+        break;
+      }
+    }
+    _stateStream.add(null);
   }
 
   Future<void> _onOperatorChat(
       String from, String text, Map<String, dynamic>? att) async {
     final m = ChatMsg('orubus', text,
-        attName: att?['name'] as String?,
-        attMime: att?['mime'] as String?,
-        attUrl: att?['url'] as String?);
+        attName: att?['name']?.toString(),
+        attMime: att?['mime']?.toString(),
+        attUrl: att?['url']?.toString(),
+        attSize: att?['size'] == null ? null : (att!['size'] as num).toInt());
     chats.add(m);
     _chatStream.add(m);
     await _persist(m);

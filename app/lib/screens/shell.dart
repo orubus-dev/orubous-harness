@@ -56,9 +56,16 @@ class _HarnessShellState extends State<HarnessShell> {
   }
 
   void _copyToken() {
-    Clipboard.setData(ClipboardData(text: widget.store.pasteString));
+    final code = widget.store.pairCode;
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('no active code — open Pairing and generate one'),
+          duration: Duration(seconds: 2)));
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: code));
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('pairing string copied — paste it to Orubus.ai'),
+        content: Text('pairing code copied — paste it to Orubus.ai'),
         duration: Duration(seconds: 2)));
   }
 
@@ -269,7 +276,7 @@ class _HarnessShellState extends State<HarnessShell> {
             const SizedBox(height: 10),
             Text(
               s.hasIdentity
-                  ? 'identity orubous-…${s.topic.length > 8 ? s.topic.substring(s.topic.length - 6) : s.topic}'
+                  ? 'device ${s.deviceId.length > 12 ? s.deviceId.substring(0, 12) : s.deviceId}…'
                   : 'no identity yet',
               style: const TextStyle(fontSize: 11, color: Neu.inkSoft),
             ),

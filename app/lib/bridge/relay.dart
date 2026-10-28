@@ -156,8 +156,9 @@ class RelayEngine {
     }
   }
 
-  /// Upload a file to the asset store, then send the pointer as a chat line.
-  Future<bool> sendAttachment(String name, String mime, List<int> bytes) async {
+  /// Upload a file to the relay's asset store. Returns the permanent URL,
+  /// or null on failure. The pointer travels as a normal chat envelope.
+  Future<String?> sendAttachment(String name, String mime, List<int> bytes) async {
     try {
       final r = await http
           .post(_u('/api/op/attach'),
@@ -174,25 +175,14 @@ class RelayEngine {
           msg = (jsonDecode(r.body) as Map)['error']?.toString() ?? msg;
         } catch (_) {}
         log(RelayEvent(msg, isError: true));
-        return false;
+        return null;
       }
       final d = jsonDecode(r.body) as Map;
       final url = (d['url'] ?? '').toString();
-      if (url.isEmpty) return false;
-      final cr = await http
-          .post(_u('/api/op/send'),
-              headers: _headers(),
-              body: jsonEncode({
-                'type': 'chat',
-                'from': 'device',
-                'text': '📎 $name',
-                'attachment': {'name': name, 'mime': mime, 'size': bytes.length, 'url': url},
-              }))
-          .timeout(const Duration(seconds: 20));
-      return cr.statusCode == 200;
+      return url.isEmpty ? null : url;
     } catch (e) {
       log(RelayEvent('upload failed: ${e.runtimeType}', isError: true));
-      return false;
+      return null;
     }
   }
 
