@@ -51,8 +51,17 @@ class RelayEngine {
     required this.log,
   });
 
-  Uri _u(String path, [Map<String, String>? q]) => Uri.parse(
-      '$baseUrl$path${q == null ? '' : '?${q.entries.map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}').join('&')}')}');
+  Uri _u(String path, [Map<String, String>? q]) {
+    var s = '$baseUrl$path';
+    if (q != null && q.isNotEmpty) {
+      final parts = <String>[];
+      q.forEach((k, v) {
+        parts.add('${Uri.encodeQueryComponent(k)}=${Uri.encodeQueryComponent(v)}');
+      });
+      s = '$s?${parts.join('&')}';
+    }
+    return Uri.parse(s);
+  }
 
   Map<String, String> _headers() => {
         'Authorization': 'Bearer $key',
