@@ -80,8 +80,8 @@ class Updater {
   final String key;
   Updater({required this.relayBase, required this.key});
 
-  static const kAppVersion = '1.2026.10.7.1';
-  static const kAppCode = 120261008;
+  static const kAppVersion = '1.2026.10.8';
+  static const kAppCode = 120261009;
 
   Map<String, String> get _headers => {'Authorization': 'Bearer $key'};
 

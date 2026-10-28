@@ -13,6 +13,7 @@ import 'chat.dart';
 import 'device_access.dart';
 import 'pairing.dart';
 import 'settings.dart';
+import 'zauth.dart';
 
 /// App shell — skeuomorphic top bar:
 ///   hamburger (top-left)  -> drawer with every screen
@@ -292,6 +293,40 @@ class _HarnessShellState extends State<HarnessShell> {
             item(Icons.verified_user_outlined, 'Authentication', 3),
             item(Icons.tune, 'Settings', 4),
             const Divider(height: 22, color: Color(0x33A9B6C9)),
+            // 10.8 — z.ai free chat: login lives outside the IndexedStack
+            // (a WebView page must not stay alive in the stack).
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => ZAuthScreen(store: widget.store)));
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 13),
+                    child: Row(children: [
+                      const Icon(Icons.travel_explore,
+                          size: 20, color: Neu.inkSoft),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                            widget.store.zToken.isEmpty
+                                ? 'Z.ai login (free chat)'
+                                : 'Z.ai login — ${widget.store.zUser.isEmpty ? "session active" : widget.store.zUser}',
+                            style: const TextStyle(
+                                fontSize: 14, color: Neu.ink)),
+                      ),
+                    ]),
+                  ),
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Material(

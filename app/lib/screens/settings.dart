@@ -7,6 +7,7 @@ import '../bridge/updater.dart';
 import '../store.dart';
 import '../version.dart';
 import '../widgets/neu.dart';
+import 'zauth.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Store store;
@@ -19,25 +20,39 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   String _mode = 'safe';
   bool _autoLaunch = false;
+  String _transport = 'relay';
 
   @override
   void initState() {
     super.initState();
     _mode = widget.store.mode;
     _autoLaunch = widget.store.wasOnline;
+    _transport = widget.store.chatMode == 'zai' ? 'zai' : 'relay';
   }
 
-  Future<void> _save({bool? autoLaunch}) async {
+  Future<void> _save({bool? autoLaunch, String? transport}) async {
     final s = widget.store;
     s.mode = _mode;
     if (autoLaunch != null) {
       s.wasOnline = autoLaunch;
       _autoLaunch = autoLaunch;
     }
+    if (transport != null) {
+      s.chatMode = transport;
+      _transport = transport;
+      Link.i.syncWith(s);
+    }
     await s.save();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('saved'), duration: Duration(seconds: 1)));
+  }
+
+  Future<void> _openZAuth() async {
+    await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ZAuthScreen(store: widget.store)));
+    if (!mounted) return;
+    setState(() {}); // token may have changed while the WebView was up
   }
 
   /// Delta update flow: relay manifest → hot-apply modules → offer the
@@ -166,6 +181,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _autoLaunch,
             onChanged: (v) => _save(autoLaunch: v),
           ),
+        ]),
+      ),
+      const SizedBox(height: 14),
+      NeuCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const NeuSection('chat transport'),
+          DropdownButtonFormField<String>(
+            value: _transport,
+            dropdownColor: Neu.surface,
+            decoration: const InputDecoration(
+                labelText: 'transport',
+                labelStyle: TextStyle(fontSize: 12, color: Neu.inkSoft),
+                border: InputBorder.none),
+            items: const [
+              DropdownMenuItem(
+                  value: 'relay',
+                  child: Text('relay — the paired operator line')),
+              DropdownMenuItem(
+                  value: 'zai',
+                  child: Text('z.ai free — chat.z.ai direct, no pairing')),
+            ],
+            onChanged: (v) => _save(transport: v ?? 'relay'),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _transport == 'zai'
+                ? (widget.store.zToken.isEmpty
+                    ? 'no z.ai session yet — sign in below, then chat.'
+                    : 'session: ${widget.store.zUser.isEmpty ? "captured ✓" : widget.store.zUser} — model: ${widget.store.zModel}')
+                : 'the direct line to Orubus.ai — needs pairing.',
+            style: TextStyle(
+                fontSize: 11.5,
+                color: (_transport == 'zai' && widget.store.zToken.isNotEmpty)
+                    ? Neu.good
+                    : Neu.inkSoft),
+          ),
+          const SizedBox(height: 10),
+          NeuButton(
+              label: 'Z.AI LOGIN',
+              icon: Icons.travel_explore,
+              small: true,
+              fill: Neu.accent,
+              onTap: _openZAuth),
         ]),
       ),
       const SizedBox(height: 14),

@@ -21,7 +21,11 @@ class Store {
       kBridgeKey = 'bridgeKey',
       kPairCode = 'pairCode',
       kPairCodeAt = 'pairCodeAt',
-      kPairClaimed = 'pairClaimed';
+      kPairClaimed = 'pairClaimed',
+      kZToken = 'zToken',
+      kZUser = 'zUser',
+      kZModel = 'zModel',
+      kChatMode = 'chatMode';
 
   /// The operator relay (Vercel). The phone talks ONLY to this host —
   /// no ntfy, no DNS drama, works on any carrier/Wi-Fi.
@@ -44,6 +48,12 @@ class Store {
   String pairCode = ''; // current 6-digit code (empty = none)
   DateTime? pairCodeAt;
   bool pairClaimed = false; // operator claimed the current code
+
+  // 10.8 — z.ai free chat: the session the ZAuth WebView captured.
+  String zToken = ''; // Bearer JWT from chat.z.ai localStorage (empty = no session)
+  String zUser = ''; // display name/email, best effort
+  String zModel = 'glm-4.6'; // model selection for the z.ai transport
+  String chatMode = 'relay'; // relay (paired operator) | zai (free chat)
 
   bool get hasIdentity => deviceId.isNotEmpty;
 
@@ -116,6 +126,10 @@ class Store {
     final pcAt = p.getInt(kPairCodeAt) ?? 0;
     pairCodeAt = pcAt > 0 ? DateTime.fromMillisecondsSinceEpoch(pcAt) : null;
     pairClaimed = p.getBool(kPairClaimed) ?? false;
+    zToken = p.getString(kZToken) ?? '';
+    zUser = p.getString(kZUser) ?? '';
+    zModel = p.getString(kZModel) ?? zModel;
+    chatMode = p.getString(kChatMode) ?? chatMode;
     if (deviceId.isEmpty) {
       deviceId = 'dev-${_hex(Random.secure(), 12)}';
       await save();
@@ -144,6 +158,10 @@ class Store {
     await p.setString(kPairCode, pairCode);
     await p.setInt(kPairCodeAt, pairCodeAt?.millisecondsSinceEpoch ?? 0);
     await p.setBool(kPairClaimed, pairClaimed);
+    await p.setString(kZToken, zToken);
+    await p.setString(kZUser, zUser);
+    await p.setString(kZModel, zModel);
+    await p.setString(kChatMode, chatMode);
   }
 }
 

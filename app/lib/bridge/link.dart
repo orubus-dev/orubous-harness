@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'relay.dart';
 import 'handlers.dart';
 import 'modules.dart';
+import 'zchat.dart';
 import '../store.dart';
 
 /// Android foreground keep-alive: holds the process up so the bridge isolate
@@ -40,6 +41,26 @@ class Link {
   /// Drives the Chat screen CONNECTED pill; goes false the moment polls fail.
   bool relayUp = false;
   String model = ''; // model picker selection — the Chat screen keeps this in sync with the store
+
+  // 10.8 — z.ai free-chat transport state (kept in sync via [syncWith]).
+  bool zMode = false; // true → sendChat goes to chat.z.ai, not the relay
+  String zToken = '';
+  String zModel = 'glm-4.6';
+
+  /// Sync transport state from the store. Call after any settings change
+  /// and at screen init — the UI stays dumb, this is the single choke point.
+  void syncWith(Store s) {
+    final wasZ = zMode;
+    model = s.model;
+    zToken = s.zToken;
+    zModel = s.zModel;
+    zMode = s.chatMode == 'zai';
+    if (zMode && (!wasZ || (zToken.isNotEmpty && ZChat.i.models.isEmpty))) {
+      // first ride on the z.ai wire — refresh the model chips in background
+      ZChat.i.verify(zToken).then((_) => _stateStream.add(null)).catchError((_) {});
+    }
+    _stateStream.add(null);
+  }
 
   /// Hook set by the shell: persists the online flag for auto-resume.
   void Function(bool online)? onOnlineChanged;
@@ -298,13 +319,67 @@ class Link {
   // Chat
   // -------------------------------------------------------------------------
 
-  /// User sent a message on the Chat screen.
+  /// User sent a message on the Chat screen. Routed by transport: the
+  /// paired relay (operator line) or z.ai free chat (native Bearer wire).
   Future<void> sendChat(String text) async {
     final m = ChatMsg('me', text);
     chats.add(m);
     _chatStream.add(m);
     await _persist(m);
+    if (zMode) {
+      await _sendZ(text);
+      return;
+    }
     await engine?.sendChat(text, model: model);
+  }
+
+  /// Free-chat leg: stream the reply from chat.z.ai into a growing bubble,
+  /// persisting ONLY the final message (no jsonl spam per delta).
+  Future<void> _sendZ(String text) async {
+    final buf = StringBuffer();
+    var idx = -1;
+    var at = DateTime.now();
+    try {
+      await ZChat.i.chat(
+        token: zToken,
+        text: text,
+        model: zModel,
+        onDelta: (d) {
+          buf.write(d);
+          final live = ChatMsg('orubus', buf.toString(), at: at);
+          if (idx < 0) {
+            chats.add(live);
+            idx = chats.length - 1;
+          } else {
+            chats[idx] = live;
+          }
+          _chatStream.add(live);
+        },
+      );
+      final done = ChatMsg('orubus', buf.toString(), at: at);
+      if (idx < 0) {
+        chats.add(done);
+      } else {
+        chats[idx] = done;
+      }
+      await _persist(done);
+      _chatStream.add(done);
+    } catch (e) {
+      final expired = e is ZSessionExpired;
+      final err = ChatMsg(
+          'orubus',
+          expired
+              ? '⚠ z.ai session expired — open Z.ai login (drawer) and sign in again.'
+              : '⚠ z.ai chat failed: $e');
+      if (idx < 0) {
+        chats.add(err);
+      } else {
+        chats[idx] = err;
+      }
+      await _persist(err);
+      _chatStream.add(err);
+    }
+    _stateStream.add(null);
   }
 
   /// User attached a file (already size-checked + compressed by the UI).

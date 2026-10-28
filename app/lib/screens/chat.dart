@@ -8,6 +8,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 import '../bridge/link.dart';
 import '../bridge/modules.dart';
+import '../bridge/zchat.dart';
 import '../store.dart';
 import '../widgets/neu.dart';
 
@@ -35,6 +36,13 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    Link.i.syncWith(widget.store);
+    if (Link.i.zMode && widget.store.zToken.isNotEmpty) {
+      // best-effort model refresh for the chip bar (already cached → no-op)
+      ZChat.i.verify(widget.store.zToken).then((_) {
+        if (mounted) setState(() {});
+      }).catchError((_) {});
+    }
     _sub = Link.i.chatStream.listen((_) {
       if (!mounted) return;
       setState(() {});
@@ -163,20 +171,28 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final online = Link.i.online;
     final relayUp = Link.i.relayUp && online;
+    final z = Link.i.zMode;
+    final zLive = z && widget.store.zToken.isNotEmpty;
     // True wire-level states: relayUp means polls return 200 (authenticated
-    // + live) — not just "process running". This is the pill that must say
-    // CONNECTED only when chatting actually works.
-    final statusColor = !online
-        ? Neu.inkSoft
-        : (relayUp ? Neu.good : Neu.warn);
-    final statusText = !online
-        ? 'OFFLINE — toggle Go online in the three-dot menu'
-        : (relayUp
-            ? 'CONNECTED · live chat active'
-            : 'CONNECTING… reaching the relay');
-    final statusWeight = relayUp ? FontWeight.w800 : FontWeight.w600;
+    // + live) — not just "process running". In z.ai mode the pill tracks the
+    // captured session instead: no pairing needed, the login IS the wire.
+    final statusColor = z
+        ? (zLive ? Neu.good : Neu.warn)
+        : (!online
+            ? Neu.inkSoft
+            : (relayUp ? Neu.good : Neu.warn));
+    final statusText = z
+        ? (zLive
+            ? 'Z·FREE · chatting chat.z.ai directly — no pairing'
+            : 'Z·FREE · no session — open Z.ai login in the drawer')
+        : (!online
+            ? 'OFFLINE — toggle Go online in the three-dot menu'
+            : (relayUp
+                ? 'CONNECTED · live chat active'
+                : 'CONNECTING… reaching the relay'));
+    final statusWeight = (z ? zLive : relayUp) ? FontWeight.w800 : FontWeight.w600;
 
-    return Column(children: [
+    return Column(children:[
       Padding(
         padding: const EdgeInsets.fromLTRB(14, 2, 14, 4),
         child: Row(children: [
@@ -186,7 +202,7 @@ class _ChatScreenState extends State<ChatScreen> {
             decoration: BoxDecoration(
                 color: statusColor,
                 shape: BoxShape.circle,
-                boxShadow: relayUp
+                boxShadow: (z ? zLive : relayUp)
                     ? [BoxShadow(color: Neu.good.withOpacity(0.6), blurRadius: 5)]
                     : null),
           ),
@@ -195,9 +211,9 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Text(statusText,
                 style: TextStyle(
                     fontSize: 11.5,
-                    color: relayUp ? Neu.good : Neu.inkSoft,
+                    color: (z ? zLive : relayUp) ? Neu.good : Neu.inkSoft,
                     fontWeight: statusWeight,
-                    letterSpacing: relayUp ? 0.3 : 0)),
+                    letterSpacing: (z ? zLive : relayUp) ? 0.3 : 0)),
           ),
           if (_uploading)
             const SizedBox(
@@ -358,23 +374,48 @@ class _ChatScreenState extends State<ChatScreen> {
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
   Widget _modelBar() {
-    // Model chips: hot-updatable via the updates system (model_map module).
-    // Falls back to the built-in set when no module is installed.
-    final models = Modules.modelLabels();
-    final current = widget.store.model;
+    // Model chips: relay mode → hot-updatable via the updates system
+    // (model_map module); z.ai free mode → the live model list from the
+    // chat.z.ai session (fetched by Link.syncWith / initState).
+    final z = Link.i.zMode;
+    final models = z ? ZChat.i.models : Modules.modelLabels();
+    final current = z ? widget.store.zModel : widget.store.model;
+    final fallback = z && models.isEmpty;
     return SizedBox(
       height: 38,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
         children: [
+          if (fallback)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                  color: Neu.surface,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(widget.store.zModel,
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Neu.inkSoft)),
+              ),
+            ),
           for (final m in models)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: GestureDetector(
                 onTap: () async {
-                  widget.store.model = m;
+                  if (z) {
+                    widget.store.zModel = m;
+                  } else {
+                    widget.store.model = m;
+                  }
                   await widget.store.save();
+                  Link.i.syncWith(widget.store);
                   if (mounted) setState(() {});
                 },
                 child: Container(
@@ -436,10 +477,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _send(),
                   style: const TextStyle(fontSize: 14, color: Neu.ink),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                       isDense: true,
-                      hintText: 'message Orubus.ai…',
-                      hintStyle: TextStyle(color: Neu.inkSoft, fontSize: 13.5),
+                      hintText: z ? 'message chat.z.ai…' : 'message Orubus.ai…',
+                      hintStyle: const TextStyle(color: Neu.inkSoft, fontSize: 13.5),
                       border: InputBorder.none),
                 ),
               ),
