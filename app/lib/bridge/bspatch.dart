@@ -13,7 +13,7 @@ Uint8List bspatch(Uint8List oldData, Uint8List patch) {
   if (patch.length < 32) throw const FormatException('patch too short');
   final head = ByteData.sublistView(patch, 0, 32);
   final magic = String.fromCharCodes(patch.sublist(0, 8));
-  if (magic != 'BSDIFF40') throw const FormatException('bad magic: $magic');
+  if (magic != 'BSDIFF40') throw FormatException('bad magic: $magic');
   final ctrlLen = head.getInt64(8, Endian.big);
   final diffLen = head.getInt64(16, Endian.big);
   final newSize = head.getInt64(24, Endian.big);
@@ -72,5 +72,5 @@ Uint8List bspatch(Uint8List oldData, Uint8List patch) {
 Uint8List _bzip2(List<int> raw) {
   final decoder = BZip2Decoder();
   final out = decoder.decodeBytes(Uint8List.fromList(raw));
-  return out;
+  return out is Uint8List ? out : Uint8List.fromList(out);
 }
