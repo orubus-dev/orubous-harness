@@ -33,7 +33,7 @@ class Store {
   String token = '';
   String ntfyBase = 'https://ntfy.sh';
   String mode = 'safe'; // safe | open
-  String model = 'GLM-4.7'; // model picker selection, rides with each chat
+  String model = 'GLM-5.3-Flash'; // model picker selection, rides with each chat
   DateTime? pairAt;
   bool wasOnline = false;
   String chatUrl = '';

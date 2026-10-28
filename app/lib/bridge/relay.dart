@@ -85,6 +85,7 @@ class RelayEngine {
   }
 
   Future<void> _loop() async {
+    _client ??= http.Client(); // BUGFIX 10.8: was never initialized — poll crashed (_TypeError) every iteration, app never fetched operator replies
     while (running) {
       try {
         final r = await _client!

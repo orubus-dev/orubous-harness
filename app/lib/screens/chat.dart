@@ -343,7 +343,7 @@ class _ChatScreenState extends State<ChatScreen> {
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
   Widget _modelBar() {
-    const models = ['GLM-4.7', 'GLM-4.6', 'Fast'];
+    const models = ['GLM-5.3-Flash', 'GLM-5.3', 'Fast'];
     final current = widget.store.model;
     return SizedBox(
       height: 38,
