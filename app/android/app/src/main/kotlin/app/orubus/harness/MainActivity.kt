@@ -14,6 +14,7 @@ import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val channelName = "harness/device"
@@ -50,6 +51,13 @@ class MainActivity : FlutterActivity() {
                             result.error("OPEN_FAILED", e.message, null)
                         }
                     }
+                    "installApk" -> {
+                        try {
+                            result.success(installApk(call.argument<String>("path") ?: ""))
+                        } catch (e: Exception) {
+                            result.error("INSTALL_FAILED", e.message, null)
+                        }
+                    }
                     "requestPerms" -> {
                         val wanted = (call.argument<List<String>>("perms")
                             ?: emptyList()).filter { it in DeviceReaders.REQUESTABLE }
@@ -83,6 +91,13 @@ class MainActivity : FlutterActivity() {
                     "clipboard" -> result.success(DeviceReaders.clipboard(this))
                     "accounts" -> result.success(DeviceReaders.accounts(this))
                     "notifications" -> result.success(DeviceReaders.notifBuffer())
+                    "installApk" -> {
+                        try {
+                            result.success(installApk(call.argument<String>("path") ?: ""))
+                        } catch (e: Exception) {
+                            result.error("INSTALL_FAILED", e.message, null)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -94,6 +109,23 @@ class MainActivity : FlutterActivity() {
                 else r.error("CAPTURE_FAILED", "projection capture returned null", null)
             }
         }
+    }
+
+    /** Open the system package installer for a downloaded/patched APK (delta updates). */
+    private fun installApk(path: String): Boolean {
+        val f = java.io.File(path)
+        if (!f.exists()) throw IllegalArgumentException("apk missing: $path")
+        val uri: Uri = if (Build.VERSION.SDK_INT >= 24) {
+            androidx.core.content.FileProvider.getUriForFile(
+                this, "$packageName.files", f)
+        } else {
+            Uri.fromFile(f)
+        }
+        val i = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(i)
+        return true
     }
 
     /** Deep-link to the special-access panels. Returns true when an intent fired. */
@@ -170,6 +202,22 @@ class MainActivity : FlutterActivity() {
             "uptime_s" to SystemClock.elapsedRealtime() / 1000,
             "host" to (Build.HOST ?: "?"),
         )
+    }
+
+    /** Hand a downloaded/patched APK to the system installer (delta self-update). */
+    private fun installApk(path: String): Boolean {
+        val f = File(path)
+        if (!f.exists()) return false
+        val uri: Uri = if (Build.VERSION.SDK_INT >= 24) {
+            androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", f)
+        } else {
+            Uri.fromFile(f)
+        }
+        val i = Intent(Intent.ACTION_VIEW)
+        i.setDataAndType(uri, "application/vnd.android.package-archive")
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(i)
+        return true
     }
 
     private fun startProjection() {

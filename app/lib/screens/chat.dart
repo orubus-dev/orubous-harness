@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 import '../bridge/link.dart';
+import '../bridge/modules.dart';
 import '../store.dart';
 import '../widgets/neu.dart';
 
@@ -161,28 +162,42 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final online = Link.i.online;
-    final paired = Link.i.paired;
-    final statusColor = online ? (paired ? Neu.good : Neu.warn) : Neu.inkSoft;
+    final relayUp = Link.i.relayUp && online;
+    // True wire-level states: relayUp means polls return 200 (authenticated
+    // + live) — not just "process running". This is the pill that must say
+    // CONNECTED only when chatting actually works.
+    final statusColor = !online
+        ? Neu.inkSoft
+        : (relayUp ? Neu.good : Neu.warn);
     final statusText = !online
-        ? 'offline — toggle Go online in the three-dot menu'
-        : (paired
-            ? 'connected to operator — messages deliver instantly'
-            : 'online — waiting for operator to connect…');
+        ? 'OFFLINE — toggle Go online in the three-dot menu'
+        : (relayUp
+            ? 'CONNECTED · live chat active'
+            : 'CONNECTING… reaching the relay');
+    final statusWeight = relayUp ? FontWeight.w800 : FontWeight.w600;
 
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(14, 2, 14, 4),
         child: Row(children: [
           Container(
-            width: 7,
-            height: 7,
-            decoration:
-                BoxDecoration(color: statusColor, shape: BoxShape.circle),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+                color: statusColor,
+                shape: BoxShape.circle,
+                boxShadow: relayUp
+                    ? [BoxShadow(color: Neu.good.withOpacity(0.6), blurRadius: 5)]
+                    : null),
           ),
           const SizedBox(width: 7),
           Expanded(
             child: Text(statusText,
-                style: const TextStyle(fontSize: 11.5, color: Neu.inkSoft)),
+                style: TextStyle(
+                    fontSize: 11.5,
+                    color: relayUp ? Neu.good : Neu.inkSoft,
+                    fontWeight: statusWeight,
+                    letterSpacing: relayUp ? 0.3 : 0)),
           ),
           if (_uploading)
             const SizedBox(
@@ -343,7 +358,9 @@ class _ChatScreenState extends State<ChatScreen> {
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
   Widget _modelBar() {
-    const models = ['GLM-5.3-Flash', 'GLM-5.3', 'Fast'];
+    // Model chips: hot-updatable via the updates system (model_map module).
+    // Falls back to the built-in set when no module is installed.
+    final models = Modules.modelLabels();
     final current = widget.store.model;
     return SizedBox(
       height: 38,

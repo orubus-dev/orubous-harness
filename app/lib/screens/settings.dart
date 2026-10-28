@@ -1,16 +1,12 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 
 import '../bridge/link.dart';
+import '../bridge/modules.dart';
+import '../bridge/updater.dart';
 import '../store.dart';
 import '../version.dart';
 import '../widgets/neu.dart';
-
-const _releasesApi =
-    'https://api.github.com/repos/orubus-dev/orubus-harness/releases/latest';
 
 class SettingsScreen extends StatefulWidget {
   final Store store;
@@ -44,19 +40,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
         content: Text('saved'), duration: Duration(seconds: 1)));
   }
 
+  /// Delta update flow: relay manifest → hot-apply modules → offer the
+  /// binary release (delta patch or full APK) if one targets this build.
   Future<void> _checkUpdates() async {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('checking…'), duration: Duration(seconds: 1)));
+        content: Text('checking the relay for updates…'),
+        duration: Duration(seconds: 1)));
     try {
-      final r = await http.get(Uri.parse(_releasesApi),
-          headers: {'User-Agent': 'orubus-harness-updater'},
-      ).timeout(const Duration(seconds: 15));
-      if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
-      final rel = jsonDecode(r.body) as Map<String, dynamic>;
-      final tag = (rel['tag_name'] ?? '').toString();
-      final url = (rel['html_url'] ?? '').toString();
-      final newer = tag.isNotEmpty && tag != 'v$kAppVersion';
+      final up = Updater(
+          relayBase: widget.store.relayBase,
+          key: widget.store.bridgeKey);
+      final m = await up.check();
+
+      // 1) config modules — apply silently, they ARE the delta hotfix layer
+      final applied = await up.applyModules(m.modules);
+      if (mounted && applied.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('modules updated: ${applied.join(", ")}'),
+            duration: const Duration(seconds: 3)));
+      }
+
+      // 2) binary release
+      final rel = m.release;
+      final newer = rel != null && rel.code > Updater.kAppCode;
+      final wrongBase = rel != null && rel.isDelta && rel.baseCode != Updater.kAppCode;
       if (!mounted) return;
       showDialog<void>(
         context: context,
@@ -64,10 +72,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           backgroundColor: Neu.surface,
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(Neu.radius)),
-          title: Text(newer ? 'Update available' : 'Up to date'),
+          title: Text(newer ? 'Update to ${rel!.version}' : 'Up to date'),
           content: Text(newer
-              ? 'Latest release: $tag\nInstalled: v$kAppVersion\n\nSame key signs every build — updates install over the old version.'
-              : 'Installed: v$kAppVersion — this IS the latest.'),
+              ? (wrongBase
+                  ? 'v${rel!.version} needs a different base — install it as a full APK.'
+                  : 'v${rel!.version} (${rel!.isDelta ? "delta patch — KBs, not the whole app" : "full APK"})\n\n${rel!.notes}')
+              : 'Installed: v$kAppVersion\nModules checked: ${m.modules.length}\nThis IS the latest.'),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -75,11 +85,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (newer)
               FilledButton(
                 style: FilledButton.styleFrom(backgroundColor: Neu.accentDeep),
-                onPressed: () {
+                onPressed: () async {
                   Navigator.pop(context);
-                  _openInBrowser(url);
+                  await _installRelease(up, rel!);
                 },
-                child: const Text('Get it'),
+                child: const Text('Update now'),
               ),
           ],
         ),
@@ -89,6 +99,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('update check failed: $e'),
           duration: const Duration(seconds: 3)));
+    }
+  }
+
+  Future<void> _installRelease(Updater up, ReleaseEntry rel) async {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('fetching update…'),
+        duration: Duration(seconds: 2)));
+    try {
+      final path = await up.prepareRelease(rel);
+      final ok = await up.install(path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ok
+              ? 'installer opened — confirm to finish'
+              : 'installer blocked — allow "install unknown apps" for Orubus Harness (Pairing → advanced)'),
+          duration: const Duration(seconds: 5)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('update failed: $e'),
+          duration: const Duration(seconds: 4)));
     }
   }
 

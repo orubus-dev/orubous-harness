@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paths exposed to the system installer via FileProvider (delta updates). -->
+<paths>
+    <files-path name="updates" path="updates/" />
+    <cache-path name="cache_updates" path="updates/" />
+</paths>

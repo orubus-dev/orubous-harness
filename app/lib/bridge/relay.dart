@@ -31,6 +31,10 @@ class RelayEngine {
 
   void Function(String from, String text, Map<String, dynamic>? attachment)? onChat;
   void Function()? onOperatorAlive;
+  /// Wire-level health: true only while polls come back 200 (authenticated).
+  /// Drives the Chat screen CONNECTED pill — no more guessing.
+  void Function(bool up)? onLinkState;
+  bool linkUp = false;
   bool _operatorSeen = false;
 
   bool running = false;
@@ -78,10 +82,17 @@ class RelayEngine {
 
   Future<void> stop() async {
     running = false;
+    _setLink(false);
     try {
       _client?.close();
     } catch (_) {}
     log(RelayEvent('relay stopped'));
+  }
+
+  void _setLink(bool up) {
+    if (linkUp == up) return;
+    linkUp = up;
+    onLinkState?.call(up);
   }
 
   Future<void> _loop() async {
@@ -94,15 +105,18 @@ class RelayEngine {
             .timeout(const Duration(seconds: 25));
         if (!running) break;
         if (r.statusCode == 401) {
+          _setLink(false);
           log(RelayEvent('relay rejected the key (401) — check Settings', isError: true));
           await Future.delayed(const Duration(seconds: 10));
           continue;
         }
         if (r.statusCode != 200) {
+          _setLink(false);
           log(RelayEvent('relay HTTP ${r.statusCode} — retry in 5s', isError: true));
           await Future.delayed(const Duration(seconds: 5));
           continue;
         }
+        _setLink(true); // authenticated 200 — the wire is live
         final d = jsonDecode(utf8.decode(r.bodyBytes));
         if (d is! Map) continue;
         final lastId = (d['lastId'] ?? '').toString();
@@ -115,6 +129,7 @@ class RelayEngine {
           await _onEnvelope(Map<String, dynamic>.from(e));
         }
       } catch (e) {
+        _setLink(false);
         if (running) {
           log(RelayEvent('poll dropped: ${e.runtimeType} — retry in 5s', isError: true));
           await Future.delayed(const Duration(seconds: 5));

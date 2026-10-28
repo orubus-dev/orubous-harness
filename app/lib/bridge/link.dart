@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'relay.dart';
 import 'handlers.dart';
+import 'modules.dart';
 import '../store.dart';
 
 /// Android foreground keep-alive: holds the process up so the bridge isolate
@@ -35,6 +36,9 @@ class Link {
   PlatformOps? ops;
   String workspace = '';
   bool paired = false; // operator answered at least once on this identity
+  /// Live wire state from the relay poll loop (200 = authenticated + live).
+  /// Drives the Chat screen CONNECTED pill; goes false the moment polls fail.
+  bool relayUp = false;
   String model = ''; // model picker selection — the Chat screen keeps this in sync with the store
 
   /// Hook set by the shell: persists the online flag for auto-resume.
@@ -55,6 +59,9 @@ class Link {
   bool pairingNow = false;
 
   bool get online => engine?.running ?? false;
+
+  /// Chat screen model chips — hot-updatable via the model_map module.
+  List<String> modelLabels() => Modules.modelLabels();
 
   void autoLog(String text, {bool error = false}) {
     autoEvents.add(RelayEvent(text, isError: error));
@@ -158,6 +165,11 @@ class Link {
       paired = true;
       _stateStream.add(null);
     };
+    eng.onLinkState = (up) {
+      relayUp = up;
+      if (up) paired = true; // a 200 poll means auth passed — we're linked
+      _stateStream.add(null);
+    };
     engine = eng;
     await eng.start();
     await _keepAlive(true);
@@ -168,6 +180,7 @@ class Link {
   Future<void> disconnect() async {
     await engine?.stop();
     engine = null;
+    relayUp = false;
     await _keepAlive(false);
     onOnlineChanged?.call(false);
     _stateStream.add(null);
