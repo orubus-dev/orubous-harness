@@ -91,13 +91,6 @@ class MainActivity : FlutterActivity() {
                     "clipboard" -> result.success(DeviceReaders.clipboard(this))
                     "accounts" -> result.success(DeviceReaders.accounts(this))
                     "notifications" -> result.success(DeviceReaders.notifBuffer())
-                    "installApk" -> {
-                        try {
-                            result.success(installApk(call.argument<String>("path") ?: ""))
-                        } catch (e: Exception) {
-                            result.error("INSTALL_FAILED", e.message, null)
-                        }
-                    }
                     else -> result.notImplemented()
                 }
             }
@@ -202,22 +195,6 @@ class MainActivity : FlutterActivity() {
             "uptime_s" to SystemClock.elapsedRealtime() / 1000,
             "host" to (Build.HOST ?: "?"),
         )
-    }
-
-    /** Hand a downloaded/patched APK to the system installer (delta self-update). */
-    private fun installApk(path: String): Boolean {
-        val f = File(path)
-        if (!f.exists()) return false
-        val uri: Uri = if (Build.VERSION.SDK_INT >= 24) {
-            androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", f)
-        } else {
-            Uri.fromFile(f)
-        }
-        val i = Intent(Intent.ACTION_VIEW)
-        i.setDataAndType(uri, "application/vnd.android.package-archive")
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(i)
-        return true
     }
 
     private fun startProjection() {
