@@ -24,3 +24,4 @@
 [poller] re-paired to new device identity (topic e705f4…) from discord msg 1565035238483165337; bridge ack sent via vercel; 2nd identity rotation in 15min -> app persistence bug confirmed, queued for v1.2026.10.6
 [main] msg 1565039253728002209: user confirms ntfy DEAD on phone (DNS errno=7, screenshots image1/image2.png); directive accepted: relay-first (vercel only), 6-digit code pairing, scrap token flow, light skeuomorph UI from reference imgs (upload/*.jpg @14:52), +icon attachments, model picker, webview cookie auth, round-trip acceptance test; ack sent on discord
 [build] 10.7 app pushed (bffbedd): relay_engine + 6-digit pairing screen + attach + model chips + warm reskin; relay deployed (device-token auth, sys/pair bus, b64 attach); wire test ALL PASS; CI android-apk run 40734085521 in flight
+[build] relay: attach endpoint LIVE (GitHub asset store, GH_TOKEN sourcing fixed); app: model picker pushed (ad4d39a) on top of their c9ce314 syntax fix; awaiting CI

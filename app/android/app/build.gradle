@@ -17,7 +17,7 @@ def vCode = (project.findProperty('orubusVersionCode') ?: '120261001').toString(
 
 android {
     namespace = "app.orubus.harness"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36 // file_picker lifecycle plugin requires 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
