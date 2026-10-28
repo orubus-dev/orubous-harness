@@ -123,8 +123,12 @@ class PlatformOps {
       final skill = File(
           '${d.path}${Platform.pathSeparator}SKILL.md');
       final nFiles = d.listSync(recursive: true).length;
-      rows.add('$name  files=$nFiles  '
-          'desc="${skill.existsSync() ? skill.readAsLinesSync().take(3).join(' ').take(90) : "(no SKILL.md)"}"');
+      var desc = '(no SKILL.md)';
+      if (skill.existsSync()) {
+        desc = skill.readAsLinesSync().take(3).join(' ');
+        if (desc.length > 90) desc = desc.substring(0, 90);
+      }
+      rows.add('$name  files=$nFiles  desc="$desc"');
     }
     return {'ok': true, 'out': rows.isEmpty ? '(no skills installed)' : rows.join('\n')};
   }
