@@ -11,6 +11,18 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+    // file_picker's flutter_plugin_android_lifecycle AAR demands compileSdk 36;
+    // plugin subprojects otherwise inherit Flutter's default (34) and fail
+    // CheckAarMetadata. Force every Android library subproject to 36.
+    afterEvaluate { subproject ->
+        if (subproject.hasProperty('android')) {
+            try {
+                subproject.android.compileSdkVersion 36
+            } catch (Exception ignored) {
+                // non-Android subprojects (flutter itself) have no android block
+            }
+        }
+    }
 }
 
 tasks.register("clean", Delete) {
