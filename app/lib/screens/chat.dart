@@ -456,6 +456,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _composer() {
+    final z = Link.i.zMode;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
       child: Row(children: [
