@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'bridge/link.dart';
-import 'screens/bridge.dart';
-import 'screens/chat.dart';
-import 'screens/settings.dart';
+import 'screens/shell.dart';
 import 'store.dart';
+import 'widgets/neu.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,9 +21,10 @@ class HarnessApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        brightness: Brightness.dark,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: Neu.bg,
         colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF7C4DFF), brightness: Brightness.dark),
+            seedColor: Neu.accent, brightness: Brightness.light),
       ),
       home: const HarnessHome(),
     );
@@ -40,9 +40,7 @@ class HarnessHome extends StatefulWidget {
 
 class _HarnessHomeState extends State<HarnessHome> {
   final Store store = Store();
-  String docsDir = '';
   bool ready = false;
-  int tab = 1; // start on Bridge — that's the heart of the harness
 
   @override
   void initState() {
@@ -59,34 +57,26 @@ class _HarnessHomeState extends State<HarnessHome> {
     final d = await getApplicationDocumentsDirectory();
     Link.i.workspace = d.path;
     await Link.i.loadHistory();
+    // auto-resume: the bridge comes back by itself after app closes/kills
+    Link.i.onOnlineChanged = (on) {
+      store.wasOnline = on;
+      store.save();
+    };
+    await Link.i.autoResume(store);
     if (!mounted) return;
-    setState(() {
-      docsDir = d.path;
-      ready = true;
-    });
+    setState(() => ready = true);
   }
 
   @override
   Widget build(BuildContext context) {
     if (!ready) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        backgroundColor: Neu.bg,
+        body: const Center(
+          child: CircularProgressIndicator(color: Neu.accentDeep),
+        ),
+      );
     }
-    final pages = [
-      ChatScreen(store: store),
-      BridgeScreen(store: store, workspace: docsDir),
-      SettingsScreen(store: store, docsDir: docsDir),
-    ];
-    return Scaffold(
-      body: IndexedStack(index: tab, children: pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (i) => setState(() => tab = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: 'Chat'),
-          NavigationDestination(icon: Icon(Icons.settings_remote), label: 'Bridge'),
-          NavigationDestination(icon: Icon(Icons.tune), label: 'Settings'),
-        ],
-      ),
-    );
+    return HarnessShell(store: store);
   }
 }
