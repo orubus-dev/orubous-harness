@@ -21,21 +21,54 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate platform scaffolding (android)
+      - name: Generate missing platform scaffolding (android)
         working-directory: app
-        run: flutter create . --platforms android --org dev.orubous
+        run: flutter create . --platforms android --org app.orubous
+
+      - name: Decode release keystore (secrets -> key.properties)
+        working-directory: app
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > android/app/orubus-release.jks
+            cat > android/key.properties <<EOF
+          storeFile=orubus-release.jks
+          storePassword=$KS_PASS
+          keyAlias=$KS_ALIAS
+          keyPassword=$KS_PASS
+          EOF
+            echo "keystore installed — release builds signed with the Orubous key"
+          else
+            echo "NO KEYSTORE SECRET — falling back to debug signing"
+          fi
 
       - name: Pub get
         working-directory: app
         run: flutter pub get
 
-      - name: Build release APK
+      - name: Build consumer APK (minimal permissions)
         working-directory: app
-        run: flutter build apk --release
+        run: flutter build apk --release --flavor consumer
 
-      - name: Upload APK artifact
+      - name: Build admin APK (powerhouse permissions)
+        working-directory: app
+        run: flutter build apk --release --flavor admin
+
+      - name: Stage versioned APK names
+        working-directory: app
+        run: |
+          VERSION=$(grep '^orubusVersionName=' android/gradle.properties | cut -d= -f2)
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-consumer-release.apk "out/OrubusHarness-$VERSION-consumer.apk"
+          cp build/app/outputs/flutter-apk/app-admin-release.apk "out/OrubusHarness-$VERSION-admin.apk"
+          ls -la out
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: orubous-harness-apk
-          path: app/build/app/outputs/flutter-apk/app-release.apk
+          path: app/out/*.apk
           if-no-files-found: error

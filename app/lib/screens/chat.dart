@@ -1,16 +1,13 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
+import '../bridge/link.dart';
 import '../store.dart';
 
-const _sysPrompt =
-    'You are Orubus, the AI operator inside the user\'s Orubous Harness app. '
-    'Be concise, technical, brutally honest. You can also operate this device '
-    'through the Bridge tab when a bridge identity is connected.';
-
+/// Direct chat with the operator (Orubus.ai) — NO API, NO KEY CONFIG.
+/// Messages ride the same bridge channel as operator tasks: you write here,
+/// it lands in the operator's inbox; their replies appear here.
 class ChatScreen extends StatefulWidget {
   final Store store;
   const ChatScreen({super.key, required this.store});
@@ -22,11 +19,27 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
-  final List<_Msg> _msgs = [];
+  StreamSubscription<ChatMsg>? _sub;
+  StreamSubscription<void>? _stateSub;
   bool _busy = false;
 
   @override
+  void initState() {
+    super.initState();
+    _sub = Link.i.chatStream.listen((_) {
+      if (!mounted) return;
+      setState(() {});
+      _scrollDown();
+    });
+    _stateSub = Link.i.stateStream.listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
   void dispose() {
+    _sub?.cancel();
+    _stateSub?.cancel();
     _ctrl.dispose();
     _scroll.dispose();
     super.dispose();
@@ -36,52 +49,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _ctrl.text.trim();
     if (text.isEmpty || _busy) return;
     _ctrl.clear();
-    setState(() {
-      _msgs.add(_Msg('user', text));
-      _busy = true;
-    });
+    setState(() => _busy = true);
+    await Link.i.sendChat(text);
+    if (!mounted) return;
+    setState(() => _busy = false);
     _scrollDown();
-
-    final base = widget.store.aiBase.replaceAll(RegExp(r'/+$'), '');
-    final history = [
-      {'role': 'system', 'content': _sysPrompt},
-      ..._msgs.where((m) => m.kind == 'user' || m.kind == 'ai').map((m) =>
-          {'role': m.kind == 'user' ? 'user' : 'assistant', 'content': m.text}),
-    ].toList();
-    if (history.length > 25) {
-      history.removeRange(1, history.length - 24);
-    }
-
-    try {
-      final r = await http
-          .post(Uri.parse('$base/chat/completions'),
-              headers: {
-                'Content-Type': 'application/json',
-                if (widget.store.aiKey.isNotEmpty)
-                  'Authorization': 'Bearer ${widget.store.aiKey}',
-              },
-              body: jsonEncode({
-                'model': widget.store.aiModel,
-                'messages': history,
-                'stream': false,
-              }))
-          .timeout(const Duration(seconds: 120));
-      if (r.statusCode != 200) {
-        throw 'HTTP ${r.statusCode}: ${r.body.substring(0, r.body.length > 300 ? 300 : r.body.length)}';
-      }
-      final data = jsonDecode(r.body) as Map<String, dynamic>;
-      final choices = data['choices'] as List?;
-      final content =
-          ((choices?.isNotEmpty ?? false) ? choices![0]['message']['content'] : null)
-              ?.toString() ??
-          '(empty response)';
-      setState(() => _msgs.add(_Msg('ai', content)));
-    } catch (e) {
-      setState(() => _msgs.add(_Msg('err', 'chat failed: $e')));
-    } finally {
-      setState(() => _busy = false);
-      _scrollDown();
-    }
   }
 
   void _scrollDown() {
@@ -95,26 +67,56 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final online = Link.i.online;
+    final paired = Link.i.paired;
     return Scaffold(
-      appBar: AppBar(title: const Text('Chat — GLM')),
+      appBar: AppBar(title: const Text('Orubus.ai — direct line')),
       body: Column(children: [
+        Container(
+          width: double.infinity,
+          color: online
+              ? (paired ? Colors.green.shade900.withOpacity(0.35) : Colors.orange.shade900.withOpacity(0.30))
+              : Colors.grey.shade900,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          child: Text(
+            online
+                ? (paired
+                    ? 'connected to operator — messages deliver instantly'
+                    : 'online — waiting for operator to connect…')
+                : 'offline — open the Bridge tab and press Go Online',
+            style: TextStyle(
+                fontSize: 11.5,
+                color: online
+                    ? (paired ? Colors.greenAccent : Colors.orangeAccent)
+                    : Colors.grey.shade500),
+          ),
+        ),
         Expanded(
-          child: _msgs.isEmpty
+          child: Link.i.chats.isEmpty
               ? Center(
-                  child: Text(
-                    'Direct line to GLM.\nSet your endpoint + API key in Settings.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey.shade500),
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Text(
+                      'This is a direct line to Orubus.ai —\n'
+                      'the same brain you talk to on Discord, no API keys.\n\n'
+                      '1) Bridge tab → Generate Connectivity Token\n'
+                      '2) Paste the pairing string in your chat with him\n'
+                      '3) Come back here and just talk.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 13,
+                          height: 1.5),
+                    ),
                   ),
                 )
               : ListView.builder(
                   controller: _scroll,
                   padding: const EdgeInsets.all(12),
-                  itemCount: _msgs.length,
+                  itemCount: Link.i.chats.length,
                   itemBuilder: (_, i) {
-                    final m = _msgs[i];
-                    final isUser = m.kind == 'user';
-                    final isErr = m.kind == 'err';
+                    final m = Link.i.chats[i];
+                    final isUser = m.from == 'me';
                     return Align(
                       alignment: isUser
                           ? Alignment.centerRight
@@ -125,20 +127,33 @@ class _ChatScreenState extends State<ChatScreen> {
                         constraints: BoxConstraints(
                             maxWidth: MediaQuery.of(context).size.width * 0.85),
                         decoration: BoxDecoration(
-                          color: isErr
-                              ? Colors.red.shade900.withOpacity(0.4)
-                              : isUser
-                                  ? Colors.deepPurple.shade700
-                                  : Colors.grey.shade800,
-                          borderRadius: BorderRadius.circular(12),
+                          color: isUser
+                              ? Colors.deepPurple.shade700
+                              : Colors.grey.shade800,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(12),
+                            topRight: const Radius.circular(12),
+                            bottomLeft: Radius.circular(isUser ? 12 : 2),
+                            bottomRight: Radius.circular(isUser ? 2 : 12),
+                          ),
                         ),
-                        child: SelectableText(m.text),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SelectableText(m.text),
+                            SizedBox(height: 4),
+                            Text(
+                                '${m.at.hour.toString().padLeft(2, '0')}:${m.at.minute.toString().padLeft(2, '0')}',
+                                style: TextStyle(
+                                    fontSize: 9,
+                                    color: Colors.white.withOpacity(0.4))),
+                          ],
+                        ),
                       ),
                     );
                   },
                 ),
         ),
-        if (_busy) const LinearProgressIndicator(minHeight: 2),
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
@@ -151,7 +166,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _send(),
                   decoration: const InputDecoration(
-                      hintText: 'message…', border: OutlineInputBorder()),
+                      hintText: 'message Orubus.ai…',
+                      border: OutlineInputBorder()),
                 ),
               ),
               const SizedBox(width: 8),
@@ -163,10 +179,4 @@ class _ChatScreenState extends State<ChatScreen> {
       ]),
     );
   }
-}
-
-class _Msg {
-  final String kind; // user | ai | err
-  final String text;
-  _Msg(this.kind, this.text);
 }

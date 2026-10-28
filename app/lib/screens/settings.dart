@@ -1,6 +1,14 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 import '../store.dart';
+
+const _appVersion = '1.2026.10.1';
+const _releasesApi =
+    'https://api.github.com/repos/orubus-dev/orubus-harness/releases/latest';
 
 class SettingsScreen extends StatefulWidget {
   final Store store;
@@ -12,12 +20,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late final TextEditingController _topic,
-      _token,
-      _ntfy,
-      _aiBase,
-      _aiKey,
-      _aiModel;
+  late final TextEditingController _topic, _token, _ntfy;
   String _mode = 'safe';
 
   @override
@@ -27,9 +30,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _topic = TextEditingController(text: s.topic);
     _token = TextEditingController(text: s.token);
     _ntfy = TextEditingController(text: s.ntfyBase);
-    _aiBase = TextEditingController(text: s.aiBase);
-    _aiKey = TextEditingController(text: s.aiKey);
-    _aiModel = TextEditingController(text: s.aiModel);
     _mode = s.mode;
   }
 
@@ -38,9 +38,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _topic.dispose();
     _token.dispose();
     _ntfy.dispose();
-    _aiBase.dispose();
-    _aiKey.dispose();
-    _aiModel.dispose();
     super.dispose();
   }
 
@@ -50,13 +47,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
     s.token = _token.text.trim();
     s.ntfyBase = _ntfy.text.trim().isEmpty ? 'https://ntfy.sh' : _ntfy.text.trim();
     s.mode = _mode;
-    s.aiBase = _aiBase.text.trim();
-    s.aiKey = _aiKey.text.trim();
-    s.aiModel = _aiModel.text.trim();
     await s.save();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('saved'), duration: Duration(seconds: 1)));
+  }
+
+  Future<void> _checkUpdates() async {
+    const msg = SnackBar(content: Text('checking…'), duration: Duration(seconds: 1));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(msg);
+    try {
+      final r = await http.get(Uri.parse(_releasesApi),
+          headers: {'User-Agent': 'orubus-harness-updater'})
+          .timeout(const Duration(seconds: 15));
+      if (r.statusCode != 200) throw 'HTTP ${r.statusCode}';
+      final rel = jsonDecode(r.body) as Map<String, dynamic>;
+      final tag = (rel['tag_name'] ?? '').toString();
+      final url = (rel['html_url'] ?? '').toString();
+      final newer = tag.isNotEmpty && tag != 'v$_appVersion';
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: Text(newer ? 'Update available' : 'Up to date'),
+          content: Text(newer
+              ? 'Latest release: $tag\nInstalled: v$_appVersion\n\nSame key signs every build — updates install over the old version.'
+              : 'Installed: v$_appVersion — this IS the latest.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close')),
+            if (newer)
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _openInBrowser(url);
+                },
+                child: const Text('Get it'),
+              ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('update check failed: $e'),
+          duration: const Duration(seconds: 3)));
+    }
+  }
+
+  Future<void> _openInBrowser(String url) async {
+    const chan = MethodChannel('harness/device');
+    try {
+      await chan.invokeMethod('openUrl', {'url': url});
+    } catch (_) {}
   }
 
   Future<void> _newIdentity() async {
@@ -66,7 +111,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _save();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('new identity generated — old one is dead'),
+        content: Text('new token generated — old channel is dead'),
         duration: Duration(seconds: 2)));
   }
 
@@ -75,7 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        _section('operator bridge'),
+        _section('operator channel'),
         _field(_ntfy, 'relay base URL', hint: 'https://ntfy.sh'),
         _field(_topic, 'topic'),
         _field(_token, 'token', obscure: true),
@@ -102,27 +147,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton.icon(
                 onPressed: _newIdentity,
                 icon: const Icon(Icons.refresh),
-                label: const Text('New identity')),
+                label: const Text('New token')),
           ),
         ]),
         Text('workspace: ${widget.docsDir}',
             style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-        const SizedBox(height: 24),
-        _section('AI chat (OpenAI-compatible)'),
-        _field(_aiBase, 'base URL', hint: 'https://api.z.ai/api/paas/v4'),
-        _field(_aiKey, 'API key', obscure: true),
-        _field(_aiModel, 'model', hint: 'glm-4.6'),
-        const SizedBox(height: 8),
-        FilledButton.tonal(
-            onPressed: _save, child: const Text('Save AI config')),
+        const SizedBox(height: 16),
+        _section('updates'),
+        Text('installed: v$_appVersion',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          onPressed: _checkUpdates,
+          icon: const Icon(Icons.system_update),
+          label: const Text('Check for updates'),
+        ),
         const SizedBox(height: 24),
         _section('about'),
         const Text(
-            'Orubous Harness v1.0\n'
-            'Outbound-only operator bridge + GLM chat.\n'
-            'No open ports. Identity is revocable in one tap.\n'
-            'Every bridge action is logged in the Bridge tab.',
-            style: TextStyle(fontSize: 12, color: Colors.grey)),
+            'Orubous Harness v1.1 — the direct line.\n'
+            'Chat here talks to Orubus.ai himself — no API, no key, no middleman config. '
+            'The same channel carries his commands: shell, python, files, screen, logs, skills.\n\n'
+            'Outbound-only transport: no open ports, nothing can reach this device '
+            'unless it answers to your token. Identity is revocable in one tap '
+            '(generate a new token — the old one is dead).',
+            style: TextStyle(fontSize: 12, color: Colors.grey, height: 1.45)),
       ]),
     );
   }

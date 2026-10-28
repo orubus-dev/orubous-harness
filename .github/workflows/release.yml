@@ -1,0 +1,120 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate missing platform scaffolding (android)
+        working-directory: app
+        run: flutter create . --platforms android --org app.orubous
+
+      - name: Decode release keystore (secrets -> key.properties)
+        working-directory: app
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > android/app/orubus-release.jks
+            cat > android/key.properties <<EOF
+          storeFile=orubus-release.jks
+          storePassword=$KS_PASS
+          keyAlias=$KS_ALIAS
+          keyPassword=$KS_PASS
+          EOF
+            echo "keystore installed — release builds signed with the Orubous key"
+          else
+            echo "NO KEYSTORE SECRET — falling back to debug signing"
+          fi
+
+      - name: Pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build consumer APK
+        working-directory: app
+        run: flutter build apk --release --flavor consumer
+
+      - name: Build admin APK
+        working-directory: app
+        run: flutter build apk --release --flavor admin
+
+      - name: Stage Android artifacts
+        working-directory: app
+        run: |
+          VERSION=$(grep '^orubusVersionName=' android/gradle.properties | cut -d= -f2)
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-consumer-release.apk "out/OrubusHarness-$VERSION-consumer.apk"
+          cp build/app/outputs/flutter-apk/app-admin-release.apk "out/OrubusHarness-$VERSION-admin.apk"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Orubous Harness ${{ github.ref_name }}
+          body: |
+            Orubous Harness ${{ github.ref_name }}
+
+            - **OrubusHarness-*-consumer.apk** — minimal permissions, store-friendly
+            - **OrubusHarness-*-admin.apk** — powerhouse: location, contacts, calls, SMS, calendar, media, notifications, Wi-Fi, apps (package `app.orubus.harness.admin`)
+            - Both flavors signed with the same release key — future updates install over old installs.
+            - Windows client: see the `orubous-harness-windows` artifact from the android-apk/windows workflows, or the windows-client workflow run for this tag.
+          files: |
+            app/out/OrubusHarness-*.apk
+          fail_on_unmatched_files: true
+
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate missing platform scaffolding (windows)
+        working-directory: app
+        run: flutter create . --platforms windows --org app.orubous
+
+      - name: Pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build Windows client
+        working-directory: app
+        run: flutter build windows --release
+
+      - name: Stage Windows zip
+        working-directory: app
+        shell: pwsh
+        run: |
+          $version = (Get-Content android/gradle.properties | Select-String '^orubusVersionName=').Line.Split('=')[1]
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "out\OrubusHarness-$version-windows.zip" -Force
+          Get-ChildItem out
+
+      - name: Attach Windows zip to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/out/OrubusHarness-*-windows.zip
+          fail_on_unmatched_files: true

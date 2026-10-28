@@ -1,12 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
+    <!-- CONSUMER tier baseline: the minimal set every install needs.
+         The admin flavor (src/admin) ADDS the powerhouse permission set on top. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="Orubous Harness"
+        android:label="Orubus Harness"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

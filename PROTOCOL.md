@@ -56,3 +56,50 @@ Reassembly: concatenate `data` for `part` 1..`of` in order → `json.loads` → 
 - Operator side: `laptop_ctl.py` in the operator sandbox (status/run/py/ls/put/get)
 
 Wire compatibility across all three is a test requirement, not an aspiration.
+
+---
+
+# v1.1 — the direct line + skills + device access
+
+## Pairing (30-minute window)
+
+The device generates `topic` + `token` locally and shows the paste-string:
+
+```
+ORUBUS-LINK1 topic=<topic> token=<token>
+```
+
+The user pastes it to the operator (Discord/web chat). The operator registers it
+(`server/link_ctl.py pair`) and connects. If the operator does not connect within
+**30 minutes** of generation, the device UI flags the window as closed and the
+user regenerates. Once the operator answers on the channel, pairing is complete
+and the identity stays valid until revoked.
+
+## Operator → device: chat
+
+```json
+{"type": "chat", "token": "<token>", "from": "orubus", "text": "..."}
+```
+
+Renders in the app's Chat tab. No API, no key — the operator IS the endpoint.
+
+## Device → operator: chat
+
+```json
+{"type": "chat", "token": "<token>", "from": "device", "text": "..."}
+```
+
+## New task kinds (operator → device)
+
+| kind | extra fields | semantics |
+|---|---|---|
+| `skills` | — | list installed skill packs |
+| `skill_install` | `skill`, `name`, `data` (b64), `part`, `of`, `sha256` | chunked upload into `<workspace>/skills/<skill>/<name>` |
+| `grant` | `perms: [android.permission.…]` | fire runtime permission dialogs; result = granted map |
+| `special` | `which: overlay\|write_settings\|usage\|install\|notifications\|accessibility\|battery\|app_details` | deep-link the matching system panel |
+| `openurl` | `url` | open in browser (updates, releases) |
+| `location` / `contacts` / `calls` / `sms` / `apps` / `calendar` / `net` / `wifi` / `clipboard` / `accounts` / `notifications` | — | permission-gated readers (admin flavor); Windows: `net`, `clipboard`, `apps` fallbacks |
+| `send_sms` | `to`, `body` | send an SMS (SEND_SMS granted) |
+
+Every reader answers `{"ok": false, "out": "PERMISSION REQUIRED: …"}` when its
+permission is missing — honest refusal, never a crash, never a silent empty set.

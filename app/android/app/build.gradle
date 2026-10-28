@@ -1,0 +1,71 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+// Release keystore arrives at build time from CI secrets (never committed).
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+def hasKeystore = keystorePropertiesFile.exists()
+if (hasKeystore) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+
+def vName = (project.findProperty('orubusVersionName') ?: '1.2026.10.1').toString()
+def vCode = (project.findProperty('orubusVersionCode') ?: '120261001').toString().toInteger()
+
+android {
+    namespace = "app.orubus.harness"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+
+    defaultConfig {
+        applicationId = "app.orubus.harness"
+        minSdk = flutter.minSdkVersion
+        targetSdk = flutter.targetSdkVersion
+        versionCode = vCode
+        versionName = vName
+    }
+
+    // Two flavors, one codebase:
+    //   consumer — minimal permissions, store-friendly.
+    //   admin    — full powerhouse set (see app/src/admin/AndroidManifest.xml).
+    flavorDimensions = ["tier"]
+    productFlavors {
+        consumer {
+            dimension "tier"
+            applicationId = "app.orubus.harness"
+        }
+        admin {
+            dimension "tier"
+            applicationId = "app.orubus.harness.admin"
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasKeystore) {
+                keyAlias = keystoreProperties['keyAlias']
+                keyPassword = keystoreProperties['keyPassword']
+                storeFile = file(keystoreProperties['storeFile'])
+                storePassword = keystoreProperties['storePassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = hasKeystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+}

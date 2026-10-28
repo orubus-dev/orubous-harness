@@ -12,13 +12,19 @@ class BridgeEvent {
   BridgeEvent(this.text, {this.isError = false});
 }
 
-/// Outbound-only operator bridge (protocol v1, see PROTOCOL.md).
-/// Subscribes to a private ntfy topic, executes signed tasks, publishes chunked results.
-/// Only processes `type == "task"` — the self-echo rule learned in live testing.
+/// Outbound-only operator bridge (protocol v1.1, see PROTOCOL.md).
+/// Subscribes to a private ntfy topic, executes signed tasks, publishes chunked
+/// results, and carries the direct operator<->user chat line.
+/// Processes `type == "task"` (commands) and `type == "chat"` (direct line).
 class BridgeEngine {
   final String baseUrl, topic, token, mode;
   final PlatformOps ops;
   final void Function(BridgeEvent) log;
+
+  /// Direct-chat hooks (protocol v1.1): operator sends {type:"chat"}.
+  void Function(String from, String text)? onChat;
+  void Function()? onOperatorAlive;
+  bool _operatorSeen = false;
 
   bool running = false;
   final Set<String> _seen = {};
@@ -94,10 +100,29 @@ class BridgeEngine {
           } catch (_) {
             continue;
           }
-          if (decoded is! Map || decoded['type'] != 'task') continue;
+          if (decoded is! Map) continue;
           if (decoded['token'] != token) {
             log(BridgeEvent('⚠ dropped message with bad token', isError: true));
             continue;
+          }
+          final kind = (decoded['type'] ?? '').toString();
+          if (kind == 'chat') {
+            // operator chat — the direct line, no API in between
+            final from = (decoded['from'] ?? 'orubus').toString();
+            final text = (decoded['text'] ?? '').toString();
+            if (text.isNotEmpty) {
+              if (!_operatorSeen) {
+                _operatorSeen = true;
+                onOperatorAlive?.call();
+              }
+              onChat?.call(from, text);
+            }
+            continue;
+          }
+          if (kind != 'task') continue;
+          if (!_operatorSeen) {
+            _operatorSeen = true;
+            onOperatorAlive?.call();
           }
           unawaited(_handle(Map<String, dynamic>.from(decoded)));
         }
@@ -113,6 +138,14 @@ class BridgeEngine {
       }
     }
   }
+
+  /// Send a chat message to the operator over the same channel.
+  Future<bool> sendChat(String text) => _publish({
+        'type': 'chat',
+        'from': 'device',
+        'text': text,
+        'token': token,
+      });
 
   Future<void> _handle(Map<String, dynamic> task) async {
     final tid = (task['task_id'] ?? '?').toString();

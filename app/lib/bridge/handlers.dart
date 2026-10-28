@@ -80,8 +80,151 @@ class PlatformOps {
         return _screenshot();
       case 'device':
         return _device();
+      case 'skills':
+        return _skills();
+      case 'skill_install':
+        return _skillInstall(task, putBuf);
+      case 'grant':
+        return _grant(task);
+      case 'special':
+        return _special(task);
+      case 'openurl':
+        return _openUrl(task);
+      case 'location':
+      case 'contacts':
+      case 'calls':
+      case 'sms':
+      case 'send_sms':
+      case 'apps':
+      case 'calendar':
+      case 'net':
+      case 'wifi':
+      case 'clipboard':
+      case 'accounts':
+      case 'notifications':
+        return _deviceRead(kind, task);
       default:
         return {'ok': false, 'out': 'unknown kind: $kind'};
+    }
+  }
+
+  // ---- skills (Claude-style SKILL.md packs) --------------------------------
+  String get _skillsDir =>
+      '$workspace${Platform.pathSeparator}skills';
+
+  Future<Map<String, dynamic>> _skills() async {
+    final root = Directory(_skillsDir);
+    if (!root.existsSync()) {
+      return {'ok': true, 'out': '(no skills installed)'};
+    }
+    final rows = <String>[];
+    for (final d in root.listSync().whereType<Directory>()) {
+      final name = d.path.split(Platform.pathSeparator).last;
+      final skill = File(
+          '${d.path}${Platform.pathSeparator}SKILL.md');
+      final nFiles = d.listSync(recursive: true).length;
+      rows.add('$name  files=$nFiles  '
+          'desc="${skill.existsSync() ? skill.readAsLinesSync().take(3).join(' ').take(90) : "(no SKILL.md)"}"');
+    }
+    return {'ok': true, 'out': rows.isEmpty ? '(no skills installed)' : rows.join('\n')};
+  }
+
+  Future<Map<String, dynamic>> _skillInstall(Map<String, dynamic> task,
+      Map<String, Map<int, String>> buf) async {
+    var skill = ((task['skill'] ?? '') as String).trim();
+    skill = skill.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '');
+    if (skill.isEmpty) return {'ok': false, 'out': 'skill_install: missing skill name'};
+    final name =
+        ((task['name'] ?? '') as String).split(Platform.pathSeparator).last;
+    if (name.isEmpty) return {'ok': false, 'out': 'skill_install: missing file name'};
+    final key = '${task['task_id'] ?? ''}:$skill:$name';
+    final parts = buf.putIfAbsent(key, () => {});
+    parts[((task['part'] ?? 1) as num).toInt()] = (task['data'] ?? '') as String;
+    final of = ((task['of'] ?? 1) as num).toInt();
+    if (of > parts.length) {
+      return {'ok': true, 'out': 'chunk ${parts.length}/$of'};
+    }
+    buf.remove(key);
+    final raw = base64.decode(parts.values.join());
+    if (task['sha256'] != null && sha256Hex(raw) != task['sha256']) {
+      return {'ok': false, 'out': 'sha256 MISMATCH — skill transfer corrupted'};
+    }
+    final dir = Directory('$_skillsDir${Platform.pathSeparator}$skill');
+    dir.createSync(recursive: true);
+    final f = File('${dir.path}${Platform.pathSeparator}$name');
+    f.writeAsBytesSync(raw);
+    return {'ok': true, 'out': 'skill "$skill": wrote ${f.path} (${raw.length} bytes)'};
+  }
+
+  // ---- permissions / device reads -----------------------------------------
+  Future<Map<String, dynamic>> _grant(Map<String, dynamic> task) async {
+    final perms = ((task['perms'] ?? []) as List).map((e) => e.toString()).toList();
+    if (Platform.isAndroid) {
+      try {
+        final r = await _chan
+            .invokeMethod<Map<dynamic, dynamic>>('requestPerms', {'perms': perms});
+        return {'ok': true, 'out': (r ?? {}).map((k, v) => MapEntry('$k', '$v')).entries
+            .map((e) => '${e.key}=${e.value}').join('\n')};
+      } on PlatformException catch (e) {
+        return {'ok': false, 'out': 'grant failed: ${e.code} ${e.message}'};
+      }
+    }
+    return {'ok': true, 'out': 'desktop build: permissions are OS-level, nothing to request'};
+  }
+
+  Future<Map<String, dynamic>> _special(Map<String, dynamic> task) async {
+    final which = (task['which'] ?? '').toString();
+    if (Platform.isAndroid) {
+      try {
+        final r = await _chan.invokeMethod<bool>('openSpecial', {'which': which});
+        return {'ok': r == true, 'out': r == true ? 'opened $which panel' : 'unknown panel: $which'};
+      } on PlatformException catch (e) {
+        return {'ok': false, 'out': 'special failed: ${e.code} ${e.message}'};
+      }
+    }
+    return {'ok': true, 'out': 'desktop build: no special-access panels'};
+  }
+
+  Future<Map<String, dynamic>> _openUrl(Map<String, dynamic> task) async {
+    final url = (task['url'] ?? '').toString();
+    if (url.isEmpty) return {'ok': false, 'out': 'openurl: missing url'};
+    if (Platform.isAndroid) {
+      try {
+        await _chan.invokeMethod('openUrl', {'url': url});
+        return {'ok': true, 'out': 'opened: $url'};
+      } on PlatformException catch (e) {
+        return {'ok': false, 'out': 'openUrl failed: ${e.code} ${e.message}'};
+      }
+    }
+    return _run('Start-Process "$url"', 15);
+  }
+
+  Future<Map<String, dynamic>> _deviceRead(String kind, Map<String, dynamic> task) async {
+    if (Platform.isAndroid) {
+      final method = kind == 'send_sms' ? 'sendSms' : kind;
+      final args = <String, dynamic>{
+        if (kind == 'send_sms') ...{'to': task['to'] ?? '', 'body': task['body'] ?? ''},
+      };
+      try {
+        final r = await _chan.invokeMethod<Map<dynamic, dynamic>>(method, args);
+        return {'ok': r?['ok'] == true, 'out': (r?['out'] ?? '').toString()};
+      } on PlatformException catch (e) {
+        return {'ok': false, 'out': '$kind failed: ${e.code} ${e.message}'};
+      }
+    }
+    // Windows fallbacks for the few that make sense on desktop.
+    switch (kind) {
+      case 'net':
+        return _run('Get-NetAdapter | Format-Table -AutoSize; Get-NetIPAddress -AddressFamily IPv4 '
+            '| Format-Table InterfaceAlias,IPAddress -AutoSize', 30);
+      case 'clipboard':
+        return _run('Get-Clipboard', 15);
+      case 'apps':
+        return _run('Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*,'
+            'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* '
+            '| Select-Object DisplayName,DisplayVersion | Format-Table -AutoSize', 60);
+      default:
+        return {'ok': false, 'out': '$kind is a mobile reader — not available on this platform'};
     }
   }
 

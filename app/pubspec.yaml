@@ -1,5 +1,5 @@
 name: harness
-description: Orubous Harness — AI operator bridge for Android + Windows. Chat with GLM, run an outbound-only operator channel, share screen snapshots.
+description: Orubus Harness — the direct AI operator link (consumer + admin powerhouse flavors). Direct chat with Orubus.ai, device readers, skills, screen snapshots.
 publish_to: 'none'
 version: 1.0.0+1
 

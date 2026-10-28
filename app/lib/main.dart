@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'bridge/link.dart';
 import 'screens/bridge.dart';
 import 'screens/chat.dart';
 import 'screens/settings.dart';
@@ -56,6 +57,8 @@ class _HarnessHomeState extends State<HarnessHome> {
       await store.save();
     }
     final d = await getApplicationDocumentsDirectory();
+    Link.i.workspace = d.path;
+    await Link.i.loadHistory();
     if (!mounted) return;
     setState(() {
       docsDir = d.path;

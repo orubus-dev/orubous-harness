@@ -1,4 +1,4 @@
-package dev.orubous.harness
+package app.orubus.harness
 
 import android.app.Notification
 import android.app.NotificationChannel
