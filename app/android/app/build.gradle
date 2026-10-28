@@ -68,4 +68,13 @@ android {
             signingConfig = hasKeystore ? signingConfigs.release : signingConfigs.debug
         }
     }
+
+    // Legacy native-lib packaging (extractNativeLibs=true):
+    // installer extracts .so to disk instead of mmapping from the APK,
+    // bypassing every OEM/16KB-page alignment enforcement at install time.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
