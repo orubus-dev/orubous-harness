@@ -28,6 +28,15 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "deviceInfo" -> result.success(deviceInfo())
+                    "bridgeKeepAlive" -> {
+                        val on = call.argument<Boolean>("on") ?: false
+                        try {
+                            if (on) BridgeService.start(this) else BridgeService.stop(this)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("FGS_FAILED", e.message, null)
+                        }
+                    }
                     "takeScreenshot" -> {
                         pendingResult = result
                         startProjection()

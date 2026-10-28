@@ -1,8 +1,23 @@
 import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 
 import 'engine.dart';
 import 'handlers.dart';
 import '../store.dart';
+
+/// Android foreground keep-alive: holds the process up so the bridge isolate
+/// keeps its ntfy stream while the app is backgrounded. No-op elsewhere.
+Future<void> _keepAlive(bool on) async {
+  if (!Platform.isAndroid) return;
+  try {
+    await const MethodChannel('harness/device')
+        .invokeMethod('bridgeKeepAlive', {'on': on});
+  } catch (_) {
+    // never block the bridge on the keep-alive (older builds, plugin races)
+  }
+}
 
 /// App-wide singleton: ONE bridge engine, shared by the Chat and Bridge tabs.
 /// The user chats on the Chat tab; the same channel carries operator tasks.
@@ -57,12 +72,14 @@ class Link {
     };
     engine = eng;
     await eng.start();
+    await _keepAlive(true);
     _stateStream.add(null);
   }
 
   Future<void> disconnect() async {
     await engine?.stop();
     engine = null;
+    await _keepAlive(false);
     _stateStream.add(null);
   }
 
