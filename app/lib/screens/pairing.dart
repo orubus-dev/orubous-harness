@@ -163,8 +163,8 @@ class _PairingScreenState extends State<PairingScreen> {
       const SizedBox(height: 14),
       GestureDetector(
         onTap: () => setState(() => _advanced = !_advanced),
-        child: const Padding(
-          padding: EdgeInsets.fromLTRB(4, 0, 4, 8),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
           child: Row(children: [
             Text('ADVANCED — MANUAL CHANNEL EDIT',
                 style: TextStyle(

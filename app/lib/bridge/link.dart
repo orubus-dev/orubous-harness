@@ -125,7 +125,6 @@ class Link {
         if (f.existsSync()) f.deleteSync();
       }
     } catch (_) {}
-    _chatStream.add(null);
     _stateStream.add(null);
   }
 
