@@ -1,0 +1,17 @@
+# agent runtime artifacts
+*.log
+.orubus_seen.json
+config.json
+workspace/
+
+# flutter / dart
+app/build/
+app/.dart_tool/
+app/.flutter-plugins*
+app/.packages
+app/pubspec.lock
+app/windows/flutter/ephemeral/
+app/android/.gradle/
+
+# misc
+.DS_Store

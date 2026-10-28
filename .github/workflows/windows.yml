@@ -1,0 +1,40 @@
+name: windows-client
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate platform scaffolding (windows)
+        working-directory: app
+        run: flutter create . --platforms windows --org dev.orubous
+
+      - name: Pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build release Windows client
+        working-directory: app
+        run: flutter build windows --release
+
+      - name: Zip client
+        working-directory: app
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath orubous-harness-windows.zip -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orubous-harness-windows
+          path: app/orubous-harness-windows.zip
+          if-no-files-found: error
