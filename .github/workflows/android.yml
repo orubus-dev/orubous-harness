@@ -78,7 +78,7 @@ jobs:
             "$BT/apksigner" sign \
               --ks android/app/orubus-release.jks --ks-key-alias "$KS_ALIAS" \
               --ks-pass pass:"$KS_PASS" --key-pass pass:"$KS_PASS" \
-              --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+              --min-sdk-version 21 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
               --out "$OUT" "$AL"
             "$BT/apksigner" verify --verbose --print-certs "$OUT"
           done
