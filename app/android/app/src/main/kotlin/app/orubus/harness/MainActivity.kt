@@ -169,7 +169,8 @@ class MainActivity : FlutterActivity() {
     }
 
     @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == reqScreen) {
             val r = pendingResult
             pendingResult = null
@@ -178,8 +179,6 @@ class MainActivity : FlutterActivity() {
             } else {
                 r?.error("DENIED", "screen capture denied by user", null)
             }
-            return true
         }
-        return super.onActivityResult(requestCode, resultCode, data)
     }
 }

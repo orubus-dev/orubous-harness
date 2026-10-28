@@ -33,7 +33,7 @@ class NotifListener : NotificationListenerService() {
             val title = ex?.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
             val text = ex?.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty().take(120)
             push("${fmt.format(Date(sbn.postTime))} | ${sbn.packageName} | $title | $text")
-        } catch (_) {}
+        } catch (_: Exception) {}
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {}

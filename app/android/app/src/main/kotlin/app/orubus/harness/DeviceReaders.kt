@@ -319,7 +319,9 @@ object DeviceReaders {
     private fun TelephonyManager.simStateToString(): String = when (simState) {
         TelephonyManager.SIM_STATE_READY -> "ready"
         TelephonyManager.SIM_STATE_ABSENT -> "absent"
-        TelephonyManager.SIM_STATE_LOCKED -> "locked"
+        TelephonyManager.SIM_STATE_PIN_REQUIRED,
+        TelephonyManager.SIM_STATE_PUK_REQUIRED,
+        TelephonyManager.SIM_STATE_NETWORK_LOCKED -> "locked"
         else -> "state=$simState"
     }
 

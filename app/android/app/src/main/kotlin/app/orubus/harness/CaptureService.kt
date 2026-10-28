@@ -168,10 +168,10 @@ class CaptureService : Service() {
     private fun finish(path: String?) {
         try {
             vdisplay?.release()
-        } catch (_) {}
+        } catch (_: Exception) {}
         try {
             projection?.stop()
-        } catch (_) {}
+        } catch (_: Exception) {}
         running = false
         stopForegroundRemove()
         stopSelf()
