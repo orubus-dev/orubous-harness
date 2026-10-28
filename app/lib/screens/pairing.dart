@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../bridge/link.dart';
+import '../bridge/relay_engine.dart';
 import '../store.dart';
 import '../widgets/neu.dart';
 
-/// Pairing — owns the connectivity token: view, copy, regenerate, and
-/// advanced manual editing of the channel identity (topic/token/relay).
+/// Pairing — consumer-simple: generate a 6-digit code, paste it to Orubus in
+/// chat, the link snaps live. Advanced manual channel editing stays below.
 class PairingScreen extends StatefulWidget {
   final Store store;
   const PairingScreen({super.key, required this.store});
@@ -21,7 +22,10 @@ class _PairingScreenState extends State<PairingScreen> {
   final _scroll = ScrollController();
   StreamSubscription<void>? _stateSub;
   Timer? _ticker;
+  Timer? _pairPoll;
   bool _advanced = false;
+  bool _registering = false;
+  String _pairMsg = '';
   late final TextEditingController _topic, _token, _ntfy;
 
   @override
@@ -37,6 +41,8 @@ class _PairingScreenState extends State<PairingScreen> {
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+    // resume polling if a code is already in flight
+    if (s.pairCode.isNotEmpty && !Link.i.paired) _startPairPoll();
   }
 
   @override
@@ -46,8 +52,58 @@ class _PairingScreenState extends State<PairingScreen> {
     _ntfy.dispose();
     _stateSub?.cancel();
     _ticker?.cancel();
+    _pairPoll?.cancel();
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// Generate a 6-digit code and register it with the relay. The device token
+  /// comes back immediately; it activates the moment the operator claims.
+  Future<void> _newCode() async {
+    final s = widget.store;
+    s.ensureDeviceId();
+    s.generatePairCode();
+    await s.save();
+    setState(() {
+      _registering = true;
+      _pairMsg = 'registering code…';
+    });
+    final r = await RelayPair.start(s.pairCode, s.deviceId);
+    if (!mounted) return;
+    if (r['ok'] == true && (r['deviceToken'] ?? '').toString().isNotEmpty) {
+      s.deviceToken = (r['deviceToken']).toString();
+      await s.save();
+      _pairMsg = 'waiting for operator — paste the code in your chat';
+      _startPairPoll();
+    } else {
+      _pairMsg = 'relay error: ${r['error'] ?? 'unknown'}';
+    }
+    setState(() => _registering = false);
+  }
+
+  void _startPairPoll() {
+    _pairPoll?.cancel();
+    _pairPoll = Timer.periodic(const Duration(seconds: 3), (_) async {
+      final s = widget.store;
+      if (s.pairCode.isEmpty || Link.i.paired) {
+        _pairPoll?.cancel();
+        return;
+      }
+      final st = await RelayPair.status(s.pairCode);
+      if (st['claimed'] == true && mounted) {
+        _pairPoll?.cancel();
+        Link.i.paired = true;
+        Link.i.autoLog('6-digit pairing claimed — link live');
+        setState(() => _pairMsg = 'PAIRED — link live');
+        // auto-connect the relay engine right away
+        Link.i.model = s.model;
+        await Link.i.connect(
+          deviceToken: s.deviceToken,
+          mode: s.mode,
+          log: (t, {error = false}) => Link.i.autoLog(t, error: error),
+        );
+      }
+    });
   }
 
   Future<void> _generateToken() async {
@@ -61,10 +117,10 @@ class _PairingScreenState extends State<PairingScreen> {
     if (mounted) setState(() {});
   }
 
-  void _copyPairing() {
-    Clipboard.setData(ClipboardData(text: widget.store.pasteString));
+  void _copyCode() {
+    Clipboard.setData(ClipboardData(text: widget.store.pairCode));
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('pairing string copied — paste it to Orubus.ai'),
+        content: Text('code copied — paste it to Orubus.ai'),
         duration: Duration(seconds: 2)));
   }
 
@@ -89,6 +145,92 @@ class _PairingScreenState extends State<PairingScreen> {
     final paired = Link.i.paired;
 
     return ListView(padding: const EdgeInsets.fromLTRB(14, 4, 14, 14), children: [
+      NeuCard(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Text('PAIR BY CODE',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.1,
+                    color: Neu.inkSoft)),
+            const Spacer(),
+            NeuPill(
+              Link.i.paired ? 'LINK LIVE ✓' : (s.pairCode.isNotEmpty ? 'WAITING' : 'NOT PAIRED'),
+              color: Link.i.paired
+                  ? Neu.good
+                  : (s.pairCode.isNotEmpty ? Neu.warn : Neu.inkSoft),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          if (s.pairCode.isEmpty && !Link.i.paired) ...[
+            const Text(
+                'Tap the button, then paste the 6-digit code to Orubus.ai in your chat (Discord or the app). The link snaps live in seconds — no tokens, no hex.',
+                style: TextStyle(fontSize: 12.5, height: 1.45, color: Neu.inkSoft)),
+            const SizedBox(height: 12),
+            NeuButton(
+              label: _registering ? 'REGISTERING…' : 'GENERATE 6-DIGIT CODE',
+              icon: Icons.pin,
+              fill: Neu.accent,
+              onTap: _registering ? null : _newCode,
+            ),
+          ] else ...[
+            Center(
+              child: GestureDetector(
+                onTap: _copyCode,
+                child: NeuInset(
+                  padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
+                  child: Text(
+                    s.pairCode.isEmpty ? '······' : s.pairCode,
+                    style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 38,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 8,
+                        color: Neu.ink),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Center(
+              child: Text(
+                Link.i.paired
+                    ? 'paired — this link stays yours across restarts'
+                    : (_pairMsg.isNotEmpty
+                        ? _pairMsg
+                        : 'paste this code to Orubus.ai in your chat'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: Link.i.paired ? Neu.good : Neu.inkSoft),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: NeuButton(
+                  label: 'COPY CODE',
+                  icon: Icons.copy,
+                  small: true,
+                  onTap: _copyCode,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: NeuButton(
+                  label: 'NEW CODE',
+                  icon: Icons.refresh,
+                  small: true,
+                  onTap: _registering ? null : _newCode,
+                ),
+              ),
+            ]),
+          ],
+        ]),
+      ),
+      const SizedBox(height: 14),
       NeuCard(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [

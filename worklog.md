@@ -20,3 +20,6 @@
 - gradle: 1.2026.10.6 / 120261006
 
 **10.6 verification (CI round 2, run #7): SUCCESS** — admin/consumer/windows assets published; admin6.apk (24,080,519 B) independently verified: DIGEST MATCH, self-consistent, cert fp = keystore fp. Manifest: app.orubus.harness.admin @ 1.2026.10.6 (120261006), services = NotifListener + CaptureService + BridgeService ✓
+[2026-10-28T16:13:34+0000] re-paired to 3rd identity (topic e705f47...) from discord msg 1565035238483165337; 2nd rotation in ~15min => app regenerates identity on restart, persistence fix targeted in 10.6; confirmation sent via vercel relay
+[poller] re-paired to new device identity (topic e705f4…) from discord msg 1565035238483165337; bridge ack sent via vercel; 2nd identity rotation in 15min -> app persistence bug confirmed, queued for v1.2026.10.6
+[main] msg 1565039253728002209: user confirms ntfy DEAD on phone (DNS errno=7, screenshots image1/image2.png); directive accepted: relay-first (vercel only), 6-digit code pairing, scrap token flow, light skeuomorph UI from reference imgs (upload/*.jpg @14:52), +icon attachments, model picker, webview cookie auth, round-trip acceptance test; ack sent on discord

@@ -4,10 +4,10 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// On-device identity + settings store.
-/// Identity = topic + token, generated ON THE DEVICE (never by the operator).
-/// The user pastes the pairing string to the operator; operator connects back.
-/// Deleting identity revokes the channel instantly.
+/// On-device store — v2 relay-first.
+/// The 6-digit pairing code replaces the hex topic/token dance: the app
+/// registers a code, the operator claims it, done. Identity = a device id
+/// (random, persisted) + the pairing state. Chat history survives restarts.
 class Store {
   static const kTopic = 'topic',
       kToken = 'token',
@@ -15,29 +15,47 @@ class Store {
       kMode = 'mode',
       kPairAt = 'pairAt',
       kWasOnline = 'wasOnline',
-      kChatUrl = 'chatUrl';
+      kChatUrl = 'chatUrl',
+      kDeviceId = 'deviceId',
+      kRelayBase = 'relayBase',
+      kBridgeKey = 'bridgeKey',
+      kPairCode = 'pairCode',
+      kPairCodeAt = 'pairCodeAt',
+      kPairClaimed = 'pairClaimed';
 
-  String topic = '';
+  /// The operator relay (Vercel). The phone talks ONLY to this host —
+  /// no ntfy, no DNS drama, works on any carrier/Wi-Fi.
+  static const defaultRelayBase = 'https://orubus-harness.vercel.app';
+  static const defaultBridgeKey =
+      'be49185f9187d8b8cba06104ea6f025a1a44dad2c15becef';
+
+  String topic = ''; // legacy ntfy identity (unused in relay mode, kept for compat)
   String token = '';
   String ntfyBase = 'https://ntfy.sh';
   String mode = 'safe'; // safe | open
-  DateTime? pairAt; // when the current token was generated (30-min pairing window)
-  bool wasOnline = false; // auto-resume the bridge on app launch
-  String chatUrl = ''; // operator chat endpoint (chat.z.ai/c/<id>)
+  DateTime? pairAt;
+  bool wasOnline = false;
+  String chatUrl = '';
 
-  bool get hasIdentity => topic.isNotEmpty && token.isNotEmpty;
+  String deviceId = ''; // stable random device id
+  String relayBase = defaultRelayBase;
+  String bridgeKey = defaultBridgeKey;
+  String pairCode = ''; // current 6-digit code (empty = none)
+  DateTime? pairCodeAt;
+  bool pairClaimed = false; // operator claimed the current code
 
-  /// Pairing window: operator must connect within 30 minutes of generation.
+  bool get hasIdentity => deviceId.isNotEmpty;
+
+  /// Pairing window: 15 minutes from code generation.
   Duration get pairingLeft {
-    final p = pairAt;
+    final p = pairCodeAt;
     if (p == null) return Duration.zero;
-    final left = const Duration(minutes: 30) - DateTime.now().difference(p);
+    final left = const Duration(minutes: 15) - DateTime.now().difference(p);
     return left.isNegative ? Duration.zero : left;
   }
 
-  bool get pairingOpen => hasIdentity && pairingLeft > Duration.zero;
+  bool get pairingOpen => pairCode.length == 6 && pairingLeft > Duration.zero;
 
-  /// Short display id of the operator chat endpoint (last URL segment).
   String get chatUrlShort {
     final u = chatUrl;
     if (u.isEmpty) return '';
@@ -45,9 +63,39 @@ class Store {
     return parts.isEmpty ? u : parts.last;
   }
 
-  /// The exact string the user pastes into the chat with the operator.
-  String get pasteString =>
-      hasIdentity ? 'ORUBUS-LINK1 topic=$topic token=$token' : '';
+  bool restoreFromPairLine(String line) {
+    final m = RegExp(r'ORUBUS-LINK1\s+topic=([0-9a-fA-F\-]+)\s+token=([0-9a-fA-F]+)')
+        .firstMatch(line.trim());
+    if (m == null) return false;
+    topic = m.group(1)!;
+    token = m.group(2)!;
+    pairAt = DateTime.now();
+    return true;
+  }
+
+  static bool looksLikeChatUrl(String url) {
+    final u = url.trim();
+    return u.startsWith('https://chat.z.ai/c/') && u.length > 'https://chat.z.ai/c/'.length;
+  }
+
+  /// Legacy ntfy identity — kept so old paired installs keep their channel.
+  void generateIdentity() {
+    final r = Random.secure();
+    topic = 'orubous-${_hex(r, 24)}';
+    token = _hex(r, 56);
+    pairAt = DateTime.now();
+  }
+
+  /// Fresh 6-digit pairing code (relay-first flow).
+  void generatePairCode() {
+    final r = Random.secure();
+    pairCode = (100000 + r.nextInt(900000)).toString();
+    pairCodeAt = DateTime.now();
+    pairClaimed = false;
+  }
+
+  static String _hex(Random r, int n) =>
+      List.generate(n, (_) => r.nextInt(16).toRadixString(16)).join();
 
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
@@ -59,6 +107,23 @@ class Store {
     pairAt = ms > 0 ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
     wasOnline = p.getBool(kWasOnline) ?? false;
     chatUrl = p.getString(kChatUrl) ?? '';
+    deviceId = p.getString(kDeviceId) ?? '';
+    relayBase = p.getString(kRelayBase) ?? defaultRelayBase;
+    bridgeKey = p.getString(kBridgeKey) ?? defaultBridgeKey;
+    pairCode = p.getString(kPairCode) ?? '';
+    final pcAt = p.getInt(kPairCodeAt) ?? 0;
+    pairCodeAt = pcAt > 0 ? DateTime.fromMillisecondsSinceEpoch(pcAt) : null;
+    pairClaimed = p.getBool(kPairClaimed) ?? false;
+    if (deviceId.isEmpty) {
+      deviceId = 'dev-${_hex(Random.secure(), 12)}';
+      await save();
+    }
+    // a stale unclaimed code from a previous session is dead — clear it
+    if (!pairClaimed && !pairingOpen) {
+      pairCode = '';
+      pairCodeAt = null;
+      await save();
+    }
   }
 
   Future<void> save() async {
@@ -70,54 +135,52 @@ class Store {
     await p.setInt(kPairAt, pairAt?.millisecondsSinceEpoch ?? 0);
     await p.setBool(kWasOnline, wasOnline);
     await p.setString(kChatUrl, chatUrl);
+    await p.setString(kDeviceId, deviceId);
+    await p.setString(kRelayBase, relayBase);
+    await p.setString(kBridgeKey, bridgeKey);
+    await p.setString(kPairCode, pairCode);
+    await p.setInt(kPairCodeAt, pairCodeAt?.millisecondsSinceEpoch ?? 0);
+    await p.setBool(kPairClaimed, pairClaimed);
   }
-
-  /// Restore a full identity from a pasted pairing line:
-  ///   ORUBUS-LINK1 topic=<24hex> token=<56hex>
-  /// Used by the Authentication screen — turns a fresh install (or a
-  /// reinstall) into a one-paste resume instead of a 30-minute pairing.
-  bool restoreFromPairLine(String line) {
-    final m = RegExp(r'ORUBUS-LINK1\s+topic=([0-9a-fA-F\-]+)\s+token=([0-9a-fA-F]+)')
-        .firstMatch(line.trim());
-    if (m == null) return false;
-    topic = m.group(1)!;
-    token = m.group(2)!;
-    pairAt = DateTime.now();
-    return true;
-  }
-
-  /// True when the pasted URL looks like an operator chat endpoint.
-  static bool looksLikeChatUrl(String url) {
-    final u = url.trim();
-    return u.startsWith('https://chat.z.ai/c/') && u.length > 'https://chat.z.ai/c/'.length;
-  }
-
-  /// Generate a fresh connectivity token (the user taps this in the app).
-  void generateIdentity() {
-    final r = Random.secure();
-    topic = 'orubous-${_hex(r, 24)}';
-    token = _hex(r, 56);
-    pairAt = DateTime.now();
-  }
-
-  static String _hex(Random r, int n) =>
-      List.generate(n, (_) => r.nextInt(16).toRadixString(16)).join();
 }
 
 /// One chat message in the direct line between the user and the operator.
+/// [attName]/[attUrl] carry an attachment pointer (content lives on the
+/// relay's asset store — small envelopes only).
 class ChatMsg {
   final String from; // 'me' (device user) | 'orubus' (operator AI)
   final String text;
   final DateTime at;
-  ChatMsg(this.from, this.text, {DateTime? at}) : at = at ?? DateTime.now();
+  final String? attName;
+  final String? attMime;
+  final String? attUrl;
+  final int? attSize;
 
-  Map<String, dynamic> toJson() =>
-      {'from': from, 'text': text, 'at': at.millisecondsSinceEpoch};
+  ChatMsg(this.from, this.text, {DateTime? at, this.attName, this.attMime, this.attUrl, this.attSize})
+      : at = at ?? DateTime.now();
+
+  bool get hasAttachment => attUrl != null && attUrl!.isNotEmpty;
+  bool get attIsImage => (attMime ?? '').startsWith('image/');
+
+  Map<String, dynamic> toJson() => {
+        'from': from,
+        'text': text,
+        'at': at.millisecondsSinceEpoch,
+        if (attName != null) 'attName': attName,
+        if (attMime != null) 'attMime': attMime,
+        if (attUrl != null) 'attUrl': attUrl,
+        if (attSize != null) 'attSize': attSize,
+      };
 
   static ChatMsg fromJson(Map<String, dynamic> j) => ChatMsg(
-      (j['from'] ?? '?').toString(),
-      (j['text'] ?? '').toString(),
-      at: DateTime.fromMillisecondsSinceEpoch(((j['at'] ?? 0) as num).toInt()));
+        (j['from'] ?? '?').toString(),
+        (j['text'] ?? '').toString(),
+        at: DateTime.fromMillisecondsSinceEpoch(((j['at'] ?? 0) as num).toInt()),
+        attName: j['attName']?.toString(),
+        attMime: j['attMime']?.toString(),
+        attUrl: j['attUrl']?.toString(),
+        attSize: j['attSize'] == null ? null : ((j['attSize'] as num).toInt()),
+      );
 }
 
 /// Chat history persistence (jsonl in the app workspace).

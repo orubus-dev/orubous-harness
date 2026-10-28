@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 
 /// Neumorphic design system — per the Orubus styleguide:
-/// Primary #6BCEEC · focus #00CFCC · radius 20 · layered soft shadows.
-/// Light "soft UI" surfaces on a cool gray canvas, light from the top-left.
+/// Primary #6BCEEC · focus #0DCFCC · border #E9E8E0 · surface #FFFFFF
+/// radius 20 · layered soft shadows. Warm off-white canvas, light mode,
+/// light from the top-left (soft-UI extruded cards).
 class Neu {
-  static const bg = Color(0xFFE4E9F2);
-  static const surface = Color(0xFFEDF1F8);
-  static const well = Color(0xFFDCE2EC);
-  static const shadowDark = Color(0xFFA9B6C9);
+  static const bg = Color(0xFFF0EFEB); // warm off-white canvas
+  static const surface = Color(0xFFFFFFFF); // extruded white cards
+  static const well = Color(0xFFEAE8E1); // pressed-in wells
+  static const border = Color(0xFFE9E8E0); // styleguide border token
+  static const shadowDark = Color(0xFFD8D3C7);
   static const shadowLight = Color(0xFFFFFFFF);
   static const accent = Color(0xFF6BCEEC);
   static const accentDeep = Color(0xFF2FA8CC);
-  static const focus = Color(0xFF00CFCC);
+  static const focus = Color(0xFF0DCFCC);
   static const ink = Color(0xFF26313F);
   static const inkSoft = Color(0xFF74869C);
   static const good = Color(0xFF2E9E5B);
@@ -42,6 +44,7 @@ class NeuCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Neu.surface,
         borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: Neu.border, width: 1),
         boxShadow: const [
           BoxShadow(color: Neu.shadowDark, offset: Offset(6, 6), blurRadius: 14),
           BoxShadow(color: Neu.shadowLight, offset: Offset(-6, -6), blurRadius: 14),
@@ -74,8 +77,9 @@ class NeuInset extends StatelessWidget {
       decoration: BoxDecoration(
         color: Neu.well,
         borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: Neu.border, width: 1),
         boxShadow: const [
-          BoxShadow(color: Color(0x99A9B6C9), offset: Offset(5, 5), blurRadius: 10),
+          BoxShadow(color: Color(0x99D8D3C7), offset: Offset(5, 5), blurRadius: 10),
           BoxShadow(color: Neu.shadowLight, offset: Offset(-5, -5), blurRadius: 10),
         ],
       ),

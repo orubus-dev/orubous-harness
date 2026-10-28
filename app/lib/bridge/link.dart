@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'engine.dart';
+import 'relay_engine.dart';
 import 'handlers.dart';
 import '../store.dart';
 
@@ -29,9 +29,10 @@ class Link {
 
   static const kChatMirror = 'chatMirrorJson';
 
-  BridgeEngine? engine;
+  RelayEngine? engine;
   PlatformOps? ops;
   String workspace = '';
+  String model = ''; // model picker selection sent with each chat
   bool paired = false; // operator answered at least once on this identity
 
   /// Hook set by the shell: persists the online flag for auto-resume.
@@ -129,24 +130,23 @@ class Link {
   }
 
   /// Connect the bridge (Bridge screen "Go Online", three-dot menu, auto-resume).
+  /// Relay-first: the app talks only to the Vercel relay API with its device
+  /// token — no ntfy on the device, works on any network.
   Future<void> connect({
-    required String ntfyBase,
-    required String topic,
-    required String token,
+    required String deviceToken,
     required String mode,
     required void Function(String text, {bool error}) log,
   }) async {
     if (online) return;
     ops ??= PlatformOps(workspace: workspace, mode: mode);
-    final eng = BridgeEngine(
-      baseUrl: ntfyBase,
-      topic: topic,
-      token: token,
+    final eng = RelayEngine(
+      base: Store.relayBase,
+      deviceToken: deviceToken,
       mode: mode,
       ops: ops!,
       log: (e) => log(e.text, error: e.isError),
     );
-    eng.onChat = (from, text) => _onOperatorChat(from, text);
+    eng.onChat = (from, text, att) => _onOperatorChat(from, text, att);
     eng.onOperatorAlive = () {
       paired = true;
       _stateStream.add(null);
@@ -173,16 +173,15 @@ class Link {
       await disconnect();
       return;
     }
-    if (!s.hasIdentity) {
-      log('no identity — open Pairing and generate a token first',
+    if (!s.hasRelayLink) {
+      log('no relay link yet — generate a 6-digit code on the Pairing screen',
           error: true);
       return;
     }
-    log('connecting to relay…');
+    log('connecting to operator relay…');
+    model = s.model;
     await connect(
-      ntfyBase: s.ntfyBase,
-      topic: s.topic,
-      token: s.token,
+      deviceToken: s.deviceToken,
       mode: s.mode,
       log: log,
     );
@@ -191,13 +190,12 @@ class Link {
   /// Cold-start auto-resume: if the app was online when it was closed,
   /// reconnect immediately — "withstand app closes".
   Future<void> autoResume(Store s) async {
-    if (!s.wasOnline || !s.hasIdentity || online) return;
-    autoLog('auto-resume: reconnecting bridge…');
+    if (!s.wasOnline || !s.hasRelayLink || online) return;
+    autoLog('auto-resume: reconnecting operator relay…');
     try {
+      model = s.model;
       await connect(
-        ntfyBase: s.ntfyBase,
-        topic: s.topic,
-        token: s.token,
+        deviceToken: s.deviceToken,
         mode: s.mode,
         log: autoLog,
       );
@@ -207,16 +205,23 @@ class Link {
   }
 
   /// User sent a message on the Chat screen.
-  Future<void> sendChat(String text) async {
-    final m = ChatMsg('me', text);
+  Future<void> sendChat(String text, {Map<String, dynamic>? attachment}) async {
+    final m = ChatMsg('me', text,
+        attName: attachment?['name'] as String?,
+        attMime: attachment?['mime'] as String?,
+        attUrl: attachment?['url'] as String?);
     chats.add(m);
     _chatStream.add(m);
     await _persist(m);
-    await engine?.sendChat(text);
+    await engine?.sendChat(text, attachment: attachment, model: model);
   }
 
-  Future<void> _onOperatorChat(String from, String text) async {
-    final m = ChatMsg('orubus', text);
+  Future<void> _onOperatorChat(
+      String from, String text, Map<String, dynamic>? att) async {
+    final m = ChatMsg('orubus', text,
+        attName: att?['name'] as String?,
+        attMime: att?['mime'] as String?,
+        attUrl: att?['url'] as String?);
     chats.add(m);
     _chatStream.add(m);
     await _persist(m);
